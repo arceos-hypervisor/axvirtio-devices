@@ -5,13 +5,16 @@ use crate::constants::*;
 use axvirtio_common::{VirtioError, VirtioResult};
 
 #[cfg(feature = "file-backend")]
-use std::fs::OpenOptions;
+use std::fs::{File, OpenOptions};
 #[cfg(feature = "file-backend")]
 use std::io::{Seek, SeekFrom, Read, Write};
+#[cfg(feature = "file-backend")]
+use spin::Mutex;
 
 /// File-based block device backend
 ///
 /// This backend stores data in a file on the host filesystem.
+/// Uses cached file handle to avoid reopening file on every operation.
 #[cfg(feature = "file-backend")]
 pub struct FileBackend {
     /// File path
@@ -20,6 +23,10 @@ pub struct FileBackend {
     capacity: u64,
     /// Read-only flag
     read_only: bool,
+    /// Cached file handle for performance optimization
+    cached_file: Mutex<Option<File>>,
+    /// Track whether the cached file was opened with write access
+    cached_file_writable: Mutex<bool>,
 }
 
 /// Placeholder FileBackend for when file-backend feature is disabled
@@ -58,6 +65,8 @@ impl FileBackend {
             file_path,
             capacity: capacity_sectors,
             read_only,
+            cached_file: Mutex::new(None),
+            cached_file_writable: Mutex::new(false),
         })
     }
 
@@ -78,6 +87,51 @@ impl FileBackend {
 
         Ok(())
     }
+
+    /// Get or create a cached file handle
+    ///
+    /// This method implements lazy initialization of the file handle to improve performance
+    /// by avoiding repeated file open/close operations.
+    fn get_or_create_file(&self, write_access: bool) -> VirtioResult<()> {
+        let mut cached_file_guard = self.cached_file.lock();
+        let mut cached_writable_guard = self.cached_file_writable.lock();
+
+        // Check if we already have a cached file with sufficient permissions
+        if let Some(_) = cached_file_guard.as_ref() {
+            // If we need write access but the cached file is read-only, we need to reopen
+            if write_access && !*cached_writable_guard {
+                // Clear the cache and reopen with write access
+                *cached_file_guard = None;
+                *cached_writable_guard = false;
+            } else {
+                // Existing file has sufficient permissions
+                return Ok(());
+            }
+        }
+
+        // Create new file handle with appropriate permissions
+        let mut opts = OpenOptions::new();
+        let will_be_writable = write_access && !self.read_only;
+
+        if will_be_writable {
+            opts.create(true).write(true).read(true);
+        } else {
+            opts.read(true);
+        }
+
+        let file = opts.open(&self.file_path).map_err(|_| VirtioError::BackendError)?;
+        *cached_file_guard = Some(file);
+        *cached_writable_guard = will_be_writable;
+        Ok(())
+    }
+
+    /// Clear the cached file handle (used for error recovery)
+    fn clear_cached_file(&self) {
+        let mut cached_file_guard = self.cached_file.lock();
+        let mut cached_writable_guard = self.cached_file_writable.lock();
+        *cached_file_guard = None;
+        *cached_writable_guard = false;
+    }
 }
 
 #[cfg(not(feature = "file-backend"))]
@@ -92,17 +146,36 @@ impl BlockBackend for FileBackend {
     fn read(&self, sector: u64, buffer: &mut [u8]) -> VirtioResult<usize> {
         self.validate_access(sector, buffer.len())?;
 
-        // Open file for reading
-        let mut opts = OpenOptions::new();
-        opts.read(true);
-        let mut file = opts.open(&self.file_path).map_err(|_| VirtioError::BackendError)?;
+        // Ensure we have a cached file handle
+        if let Err(e) = self.get_or_create_file(false) {
+            self.clear_cached_file();
+            return Err(e);
+        }
 
         // Calculate byte offset
         let offset = sector * SECTOR_SIZE_U64;
 
+        // Use the cached file handle
+        let mut cached_file_guard = self.cached_file.lock();
+        let file = cached_file_guard.as_mut().unwrap(); // Safe because get_or_create_file succeeded
+
         // Seek to the offset and read data
-        file.seek(SeekFrom::Start(offset)).map_err(|_| VirtioError::BackendError)?;
-        let bytes_read = file.read(buffer).map_err(|_| VirtioError::BackendError)?;
+        if let Err(_) = file.seek(SeekFrom::Start(offset)) {
+            // Clear cache on error to allow retry
+            drop(cached_file_guard);
+            self.clear_cached_file();
+            return Err(VirtioError::BackendError);
+        }
+
+        let bytes_read = match file.read(buffer) {
+            Ok(n) => n,
+            Err(_) => {
+                // Clear cache on error to allow retry
+                drop(cached_file_guard);
+                self.clear_cached_file();
+                return Err(VirtioError::BackendError);
+            }
+        };
 
         Ok(bytes_read)
     }
@@ -114,27 +187,47 @@ impl BlockBackend for FileBackend {
 
         self.validate_access(sector, buffer.len())?;
 
-        // Open file for writing
-        let mut opts = OpenOptions::new();
-        opts.write(true);
-        let mut file = opts.open(&self.file_path).map_err(|_| VirtioError::BackendError)?;
+        // Ensure we have a cached file handle with write access
+        if let Err(e) = self.get_or_create_file(true) {
+            self.clear_cached_file();
+            return Err(e);
+        }
 
         // Calculate byte offset
         let offset = sector * SECTOR_SIZE_U64;
 
+        // Use the cached file handle
+        let mut cached_file_guard = self.cached_file.lock();
+        let file = cached_file_guard.as_mut().unwrap(); // Safe because get_or_create_file succeeded
+
         // Seek to the offset and write data
-        file.seek(SeekFrom::Start(offset)).map_err(|_| VirtioError::BackendError)?;
-        let bytes_written = file.write(buffer).map_err(|_| VirtioError::BackendError)?;
+        if let Err(_) = file.seek(SeekFrom::Start(offset)) {
+            // Clear cache on error to allow retry
+            drop(cached_file_guard);
+            self.clear_cached_file();
+            return Err(VirtioError::BackendError);
+        }
+
+        let bytes_written = match file.write(buffer) {
+            Ok(n) => n,
+            Err(_) => {
+                // Clear cache on error to allow retry
+                drop(cached_file_guard);
+                self.clear_cached_file();
+                return Err(VirtioError::BackendError);
+            }
+        };
 
         Ok(bytes_written)
     }
 
     fn flush(&self) -> VirtioResult<()> {
-        // Open file and sync
-        let mut opts = OpenOptions::new();
-        opts.write(true);
-        let mut file = opts.open(&self.file_path).map_err(|_| VirtioError::BackendError)?;
-        file.flush().map_err(|_| VirtioError::BackendError)?;
+        // If we have a cached file, use it for flushing
+        let mut cached_file_guard = self.cached_file.lock();
+        if let Some(file) = cached_file_guard.as_mut() {
+            file.flush().map_err(|_| VirtioError::BackendError)?;
+        }
+        // If no cached file exists, there's nothing to flush
         Ok(())
     }
 }

@@ -90,7 +90,7 @@ pub const SECTOR_SIZE: u32 = 512;
 pub const SECTOR_SIZE_U64: u64 = 512;
 
 /// Default capacity in sectors (1MB = 2048 sectors)
-pub const DEFAULT_CAPACITY_SECTORS: u64 = 2048;
+pub const DEFAULT_CAPACITY_SECTORS: u64 = 64 * 2048;
 
 // ============================================================================
 // Block Device Configuration Defaults

@@ -4,6 +4,7 @@ mod used;
 
 pub use available::{AvailableRing, VirtqAvail};
 pub use descriptor::{DescriptorTable, VirtqDesc};
+use log::{trace, warn};
 pub use used::{UsedRing, VirtqUsed, VirtqUsedElem};
 
 use crate::{error::{VirtioError, VirtioResult}, memory::{read_guest_obj, write_guest_obj}};
@@ -253,13 +254,13 @@ impl VirtioQueue {
 
             // Validate that the first descriptor is readable (not write-only)
             if header_desc.is_write() {
-                log::warn!("Request header descriptor should not be write-only");
+                warn!("Request header descriptor should not be write-only");
                 return Err(VirtioError::InvalidDescriptor);
             }
 
             // Check if the descriptor is large enough to contain the header
             if header_desc.len < VirtioBlockHeader::SIZE {
-                log::warn!("Request header descriptor too small: {} bytes, need {} bytes",
+                warn!("Request header descriptor too small: {} bytes, need {} bytes",
                           header_desc.len, VirtioBlockHeader::SIZE);
                 return Err(VirtioError::InvalidDescriptor);
             }
@@ -267,13 +268,13 @@ impl VirtioQueue {
             // Read the header from guest memory
             let header_addr = header_desc.guest_addr();
 
-            log::debug!("Reading VirtIO block header from guest address 0x{:x}",
+            trace!("Reading VirtIO block header from guest address 0x{:x}",
                        header_addr.as_usize());
 
             // Use the structured header reading
             let header = VirtioBlockHeader::read_from_guest(header_addr)?;
 
-            log::debug!("Parsed VirtIO block header: type={}, sector={}",
+            trace!("Parsed VirtIO block header: type={}, sector={}",
                        header.request_type, header.sector);
 
             Ok(header)
@@ -320,7 +321,7 @@ impl VirtioQueue {
         // Get the status descriptor address (last descriptor in chain)
         let status_addr_guest = self.get_status_addr(head_index)?;
 
-        log::debug!(
+        trace!(
             "Writing status byte {} to guest address 0x{:x} for descriptor chain {}",
             status,
             status_addr_guest.as_usize(),

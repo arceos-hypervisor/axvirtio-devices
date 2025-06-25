@@ -3,6 +3,7 @@ use crate::constants::*;
 use alloc::vec::Vec;
 use axaddrspace::GuestPhysAddr;
 use axvirtio_common::memory::{write_guest_obj, read_guest_buffer, write_guest_buffer};
+use log::{debug, error, trace, warn};
 
 /// Block request types
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -92,7 +93,7 @@ impl BlockRequest {
                 let status = self.execute_guest_memory_request(backend, buffers, *status_addr);
                 // Write status to guest memory using safe interface
                 if let Err(_) = write_guest_obj(*status_addr, status) {
-                    log::error!("Failed to write status to guest memory");
+                    error!("Failed to write status to guest memory");
                 }
                 BlockRequestResult { status }
             }
@@ -125,29 +126,31 @@ impl BlockRequest {
         // Read data from backend
         match backend.read(self.sector, &mut buffer) {
             Ok(bytes_read) => {
-                log::debug!(
+                trace!(
                     "Read {} bytes from backend at sector {}",
                     bytes_read,
                     self.sector
                 );
 
+                trace!("Read data: {:?}", buffer);
+
                 // Copy data to guest memory buffers
                 let mut buffer_offset = 0;
                 for (guest_addr, len, is_write) in buffers {
                     if !is_write {
-                        log::warn!("Read request has non-writable data buffer");
+                        warn!("Read request has non-writable data buffer");
                         continue;
                     }
 
                     let end_offset = buffer_offset + len;
                     if end_offset > buffer.len() {
-                        log::warn!("Data buffer exceeds read data range");
+                        warn!("Data buffer exceeds read data range");
                         return VIRTIO_BLK_S_IOERR;
                     }
 
                     // Write data to guest memory using safe interface
                     if let Err(e) = write_guest_buffer(*guest_addr, &buffer[buffer_offset..end_offset]) {
-                        log::error!("Failed to write data to guest memory: {:?}", e);
+                        error!("Failed to write data to guest memory: {:?}", e);
                         return VIRTIO_BLK_S_IOERR;
                     }
 
@@ -157,7 +160,7 @@ impl BlockRequest {
                 VIRTIO_BLK_S_OK
             }
             Err(e) => {
-                log::error!("Failed to read from backend: {:?}", e);
+                error!("Failed to read from backend: {:?}", e);
                 VIRTIO_BLK_S_IOERR
             }
         }
@@ -176,19 +179,19 @@ impl BlockRequest {
         // Read data from guest memory buffers
         for (guest_addr, len, is_write) in buffers {
             if *is_write {
-                log::warn!("Write request has writable data buffer");
+                warn!("Write request has writable data buffer");
                 continue;
             }
 
             let end_offset = buffer_offset + len;
             if end_offset > buffer.len() {
-                log::warn!("Data buffer exceeds write data range");
+                warn!("Data buffer exceeds write data range");
                 return VIRTIO_BLK_S_IOERR;
             }
 
             // Read data from guest memory using safe interface
             if let Err(e) = read_guest_buffer(*guest_addr, &mut buffer[buffer_offset..end_offset]) {
-                log::error!("Failed to read data from guest memory: {:?}", e);
+                error!("Failed to read data from guest memory: {:?}", e);
                 return VIRTIO_BLK_S_IOERR;
             }
 
@@ -198,7 +201,7 @@ impl BlockRequest {
         // Write data to backend
         match backend.write(self.sector, &buffer) {
             Ok(bytes_written) => {
-                log::debug!(
+                trace!(
                     "Wrote {} bytes to backend at sector {}",
                     bytes_written,
                     self.sector
@@ -206,7 +209,7 @@ impl BlockRequest {
                 VIRTIO_BLK_S_OK
             }
             Err(e) => {
-                log::error!("Failed to write to backend: {:?}", e);
+                error!("Failed to write to backend: {:?}", e);
                 VIRTIO_BLK_S_IOERR
             }
         }
@@ -217,11 +220,11 @@ impl BlockRequest {
         // Flush the backend
         match backend.flush() {
             Ok(_) => {
-                log::debug!("Flushed backend");
+                debug!("Flushed backend");
                 VIRTIO_BLK_S_OK
             }
             Err(e) => {
-                log::error!("Failed to flush backend: {:?}", e);
+                error!("Failed to flush backend: {:?}", e);
                 VIRTIO_BLK_S_IOERR
             }
         }

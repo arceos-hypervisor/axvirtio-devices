@@ -3,6 +3,7 @@ use alloc::vec::Vec;
 use axaddrspace::{device::AccessWidth, GuestPhysAddr};
 use axerrno::AxResult;
 
+use log::{error, info, trace, warn};
 use memory_addr::MemoryAddr;
 use spin::Mutex;
 
@@ -345,7 +346,7 @@ impl VirtioMmioDevice {
 
     /// Handle queue notification
     fn handle_queue_notify(&self, queue_index: u16) {
-        log::debug!(
+        trace!(
             "Queue {} notified for device {}",
             queue_index,
             self.config.device_index
@@ -353,7 +354,7 @@ impl VirtioMmioDevice {
 
         // Check if device is ready
         if !self.is_device_ready() {
-            log::warn!("Device not ready, ignoring queue notification");
+            warn!("Device not ready, ignoring queue notification");
             return;
         }
 
@@ -363,11 +364,11 @@ impl VirtioMmioDevice {
             match queues.get(queue_index as usize) {
                 Some(q) if q.ready => q.clone(),
                 Some(_) => {
-                    log::warn!("Queue {} not ready", queue_index);
+                    warn!("Queue {} not ready", queue_index);
                     return;
                 }
                 None => {
-                    log::warn!("Invalid queue index: {}", queue_index);
+                    warn!("Invalid queue index: {}", queue_index);
                     return;
                 }
             }
@@ -378,7 +379,7 @@ impl VirtioMmioDevice {
             || queue_copy.avail_ring_addr.as_usize() == 0
             || queue_copy.used_ring_addr.as_usize() == 0
         {
-            log::warn!("Queue {} addresses not properly set", queue_index);
+            warn!("Queue {} addresses not properly set", queue_index);
             return;
         }
 
@@ -392,12 +393,12 @@ impl VirtioMmioDevice {
         let avail_idx = match queue.read_avail_idx() {
             Ok(idx) => idx,
             Err(e) => {
-                log::error!("Failed to read available index: {:?}", e);
+                error!("Failed to read available index: {:?}", e);
                 return;
             }
         };
 
-        log::debug!(
+        trace!(
             "Available index: {}, next_avail: {}",
             avail_idx,
             queue.next_avail
@@ -413,7 +414,7 @@ impl VirtioMmioDevice {
             let desc_index = match queue.read_avail_entry(ring_index) {
                 Ok(idx) => idx,
                 Err(e) => {
-                    log::error!(
+                    error!(
                         "Failed to read available ring entry {}: {:?}",
                         ring_index,
                         e
@@ -423,7 +424,7 @@ impl VirtioMmioDevice {
                 }
             };
 
-            log::debug!(
+            trace!(
                 "Processing descriptor chain starting at index {}",
                 desc_index
             );
@@ -434,7 +435,7 @@ impl VirtioMmioDevice {
                     // Request processed successfully, will be handled in process_descriptor_chain
                 }
                 Err(e) => {
-                    log::error!("Failed to process descriptor chain {}: {:?}", desc_index, e);
+                    error!("Failed to process descriptor chain {}: {:?}", desc_index, e);
                     // Store error request for later processing
                     processed_requests.push((desc_index, 0, 1)); // Status = 1 (error)
                 }
@@ -446,7 +447,7 @@ impl VirtioMmioDevice {
         // Update next_avail in the queue and handle any error requests
         if current_avail != queue.next_avail || !processed_requests.is_empty() {
             let processed_count = current_avail.wrapping_sub(queue.next_avail);
-            log::debug!("Processed {} requests", processed_count);
+            trace!("Processed {} requests", processed_count);
 
             // Update the queue's next_avail index and handle error requests
             let mut queues = self.queues.lock();
@@ -456,7 +457,7 @@ impl VirtioMmioDevice {
                 // Handle any error requests
                 for (desc_index, len, _status) in processed_requests {
                     if let Err(e) = queue_mut.add_used(desc_index, len) {
-                        log::error!("Failed to add used buffer for error request: {:?}", e);
+                        error!("Failed to add used buffer for error request: {:?}", e);
                     }
                 }
             }
@@ -483,11 +484,11 @@ impl VirtioMmioDevice {
         match queue.validate_virtio_block_chain(head_index, MIN_DESCRIPTOR_CHAIN_LENGTH) {
             Ok(true) => {}
             Ok(false) => {
-                log::error!("Invalid VirtIO block descriptor chain");
+                error!("Invalid VirtIO block descriptor chain");
                 return Err(VirtioError::InvalidQueue.into());
             }
             Err(e) => {
-                log::error!("Failed to validate descriptor chain: {:?}", e);
+                error!("Failed to validate descriptor chain: {:?}", e);
                 return Err(VirtioError::InvalidQueue.into());
             }
         }
@@ -496,7 +497,7 @@ impl VirtioMmioDevice {
         let header = match queue.parse_virtio_block_header(head_index) {
             Ok(header) => header,
             Err(e) => {
-                log::error!("Failed to parse VirtIO block header: {:?}", e);
+                error!("Failed to parse VirtIO block header: {:?}", e);
                 return Err(VirtioError::InvalidQueue.into());
             }
         };
@@ -505,7 +506,7 @@ impl VirtioMmioDevice {
         let buffers = match queue.get_data_buffers(head_index) {
             Ok(buffers) => buffers,
             Err(e) => {
-                log::error!("Failed to get data buffers: {:?}", e);
+                error!("Failed to get data buffers: {:?}", e);
                 return Err(VirtioError::InvalidQueue.into());
             }
         };
@@ -514,7 +515,7 @@ impl VirtioMmioDevice {
         let status_addr = match queue.get_status_addr(head_index) {
             Ok(addr) => addr,
             Err(e) => {
-                log::error!("Failed to get status address: {:?}", e);
+                error!("Failed to get status address: {:?}", e);
                 return Err(VirtioError::InvalidQueue.into());
             }
         };
@@ -540,7 +541,7 @@ impl VirtioMmioDevice {
 
     /// Add a used buffer to the used ring
     fn add_used_buffer(&self, queue: &VirtioQueue, desc_index: u16, len: u32, status: u8) {
-        log::debug!(
+        trace!(
             "Completing request: desc_index={}, len={}, status={}",
             desc_index,
             len,
@@ -550,7 +551,7 @@ impl VirtioMmioDevice {
         // Write the status byte to the status buffer first
         // This is typically the last descriptor in the chain
         if let Err(e) = queue.write_status_byte(desc_index, status) {
-            log::error!("Failed to write status byte: {:?}", e);
+            error!("Failed to write status byte: {:?}", e);
             return;
         }
 
@@ -559,7 +560,7 @@ impl VirtioMmioDevice {
         if let Some(queue_mut) = queues.get_mut(queue.index as usize) {
             // Add the used buffer to the used ring
             if let Err(e) = queue_mut.add_used(desc_index, len) {
-                log::error!("Failed to add used buffer: {:?}", e);
+                error!("Failed to add used buffer: {:?}", e);
                 return;
             }
 
@@ -573,11 +574,11 @@ impl VirtioMmioDevice {
                     }
                 }
                 Err(e) => {
-                    log::error!("Failed to check notification requirement: {:?}", e);
+                    error!("Failed to check notification requirement: {:?}", e);
                 }
             }
         } else {
-            log::error!("Invalid queue index: {}", queue.index);
+            error!("Invalid queue index: {}", queue.index);
         }
     }
 
@@ -589,7 +590,7 @@ impl VirtioMmioDevice {
         let mut interrupt_status = self.interrupt_status.lock();
         *interrupt_status |= VIRTIO_MMIO_INT_VRING;
 
-        log::debug!("Triggered interrupt for used buffer notification");
+        trace!("Triggered interrupt for used buffer notification");
 
         // In a real implementation, this would trigger an actual interrupt
         // to the guest VM through the interrupt controller
@@ -611,11 +612,11 @@ impl VirtioMmioDevice {
 
         // Handle status transitions
         if (status & VIRTIO_STATUS_FAILED) != 0 {
-            log::warn!("VirtIO device failed");
+            warn!("VirtIO device failed");
         }
 
         if (status & VIRTIO_STATUS_DRIVER_OK) != 0 {
-            log::info!("VirtIO device driver OK");
+            info!("VirtIO device driver OK");
         }
     }
 
