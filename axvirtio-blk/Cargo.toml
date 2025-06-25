@@ -1,0 +1,25 @@
+[package]
+name = "axvirtio-blk"
+version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+edition = "2021"
+
+[features]
+default = ["file-backend"]
+file-backend = ["axfs"]
+memory-backend = []
+
+[dependencies]
+axvirtio-common = { workspace = true }
+axaddrspace = { workspace = true }
+axerrno = "0.1.0"
+memory_addr = "0.3"
+spin = "0.9"
+log = "0.4"
+
+axdevice_base = { git = "https://github.com/arceos-hypervisor/axdevice_crates.git" }
+axhal = { git = "https://github.com/arceos-hypervisor/arceos.git", branch = "vmm" }
+axfs = { git = "https://github.com/arceos-hypervisor/arceos.git", branch = "vmm", optional = true }
