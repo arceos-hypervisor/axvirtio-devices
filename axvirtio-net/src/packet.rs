@@ -63,6 +63,7 @@ impl VirtioNetHeader {
 
     /// Convert to bytes
     pub fn as_bytes(&self) -> &[u8] {
+        // Safe because VirtioNetHeader is a simple POD struct with repr(C)
         unsafe {
             core::slice::from_raw_parts(
                 self as *const Self as *const u8,
@@ -77,6 +78,12 @@ impl VirtioNetHeader {
             return Err(axvirtio_common::VirtioError::InvalidRequest);
         }
 
+        // SAFETY: This is safe because:
+        // 1. VirtioNetHeader is a simple POD struct with repr(C) and no padding
+        // 2. We've verified the buffer size is sufficient
+        // 3. This is NOT a guest address translation - we're reading from host memory
+        // 4. read_unaligned handles potential alignment issues in network packets
+        // 5. The lifetime of the pointer is limited to this single read operation
         unsafe {
             let header_ptr = bytes.as_ptr() as *const Self;
             Ok(core::ptr::read_unaligned(header_ptr))

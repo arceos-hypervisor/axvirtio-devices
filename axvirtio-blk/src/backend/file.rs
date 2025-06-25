@@ -5,7 +5,9 @@ use crate::constants::*;
 use axvirtio_common::{VirtioError, VirtioResult};
 
 #[cfg(feature = "file-backend")]
-use axfs::fops::{File, OpenOptions};
+use std::fs::OpenOptions;
+#[cfg(feature = "file-backend")]
+use std::io::{Seek, SeekFrom, Read, Write};
 
 /// File-based block device backend
 ///
@@ -50,7 +52,7 @@ impl FileBackend {
             opts.write(true);
             opts.read(true);
         }
-        let _file = File::open(&file_path, &opts).map_err(|_| VirtioError::BackendError)?;
+        let _file = opts.open(&file_path).map_err(|_| VirtioError::BackendError)?;
 
         Ok(Self {
             file_path,
@@ -93,15 +95,14 @@ impl BlockBackend for FileBackend {
         // Open file for reading
         let mut opts = OpenOptions::new();
         opts.read(true);
-        let file = File::open(&self.file_path, &opts).map_err(|_| VirtioError::BackendError)?;
+        let mut file = opts.open(&self.file_path).map_err(|_| VirtioError::BackendError)?;
 
         // Calculate byte offset
         let offset = sector * SECTOR_SIZE_U64;
 
-        // Read data from file at offset
-        let bytes_read = file
-            .read_at(offset, buffer)
-            .map_err(|_| VirtioError::BackendError)?;
+        // Seek to the offset and read data
+        file.seek(SeekFrom::Start(offset)).map_err(|_| VirtioError::BackendError)?;
+        let bytes_read = file.read(buffer).map_err(|_| VirtioError::BackendError)?;
 
         Ok(bytes_read)
     }
@@ -116,15 +117,14 @@ impl BlockBackend for FileBackend {
         // Open file for writing
         let mut opts = OpenOptions::new();
         opts.write(true);
-        let file = File::open(&self.file_path, &opts).map_err(|_| VirtioError::BackendError)?;
+        let mut file = opts.open(&self.file_path).map_err(|_| VirtioError::BackendError)?;
 
         // Calculate byte offset
         let offset = sector * SECTOR_SIZE_U64;
 
-        // Write data to file at offset
-        let bytes_written = file
-            .write_at(offset, buffer)
-            .map_err(|_| VirtioError::BackendError)?;
+        // Seek to the offset and write data
+        file.seek(SeekFrom::Start(offset)).map_err(|_| VirtioError::BackendError)?;
+        let bytes_written = file.write(buffer).map_err(|_| VirtioError::BackendError)?;
 
         Ok(bytes_written)
     }
@@ -132,8 +132,8 @@ impl BlockBackend for FileBackend {
     fn flush(&self) -> VirtioResult<()> {
         // Open file and sync
         let mut opts = OpenOptions::new();
-        opts.read(true);
-        let file = File::open(&self.file_path, &opts).map_err(|_| VirtioError::BackendError)?;
+        opts.write(true);
+        let mut file = opts.open(&self.file_path).map_err(|_| VirtioError::BackendError)?;
         file.flush().map_err(|_| VirtioError::BackendError)?;
         Ok(())
     }

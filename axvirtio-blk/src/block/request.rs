@@ -2,6 +2,7 @@ use crate::backend::BlockBackend;
 use crate::constants::*;
 use alloc::vec::Vec;
 use axaddrspace::GuestPhysAddr;
+use axvirtio_common::memory::{write_guest_obj, read_guest_buffer, write_guest_buffer};
 
 /// Block request types
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -89,10 +90,9 @@ impl BlockRequest {
                 status_addr,
             } => {
                 let status = self.execute_guest_memory_request(backend, buffers, *status_addr);
-                // Write status to guest memory
-                unsafe {
-                    let status_ptr = status_addr.as_usize() as *mut u8;
-                    core::ptr::write_volatile(status_ptr, status);
+                // Write status to guest memory using safe interface
+                if let Err(_) = write_guest_obj(*status_addr, status) {
+                    log::error!("Failed to write status to guest memory");
                 }
                 BlockRequestResult { status }
             }
@@ -106,15 +106,10 @@ impl BlockRequest {
         buffers: &[(GuestPhysAddr, usize, bool)],
         _status_addr: GuestPhysAddr,
     ) -> u8 {
-        let request_type_u32: u32 = self.request_type.into();
-        match request_type_u32 {
-            VIRTIO_BLK_T_IN => self.handle_read_request_guest_memory(backend, buffers),
-            VIRTIO_BLK_T_OUT => self.handle_write_request_guest_memory(backend, buffers),
-            VIRTIO_BLK_T_FLUSH => self.handle_flush_request_guest_memory(backend),
-            _ => {
-                log::warn!("Unsupported request type: {}", request_type_u32);
-                VIRTIO_BLK_S_UNSUPP
-            }
+        match self.request_type {
+            BlockRequestType::Read => self.handle_read_request_guest_memory(backend, buffers),
+            BlockRequestType::Write => self.handle_write_request_guest_memory(backend, buffers),
+            BlockRequestType::Flush => self.handle_flush_request_guest_memory(backend),
         }
     }
 
@@ -150,13 +145,10 @@ impl BlockRequest {
                         return VIRTIO_BLK_S_IOERR;
                     }
 
-                    unsafe {
-                        let dest_ptr = guest_addr.as_usize() as *mut u8;
-                        core::ptr::copy_nonoverlapping(
-                            buffer[buffer_offset..end_offset].as_ptr(),
-                            dest_ptr,
-                            *len,
-                        );
+                    // Write data to guest memory using safe interface
+                    if let Err(e) = write_guest_buffer(*guest_addr, &buffer[buffer_offset..end_offset]) {
+                        log::error!("Failed to write data to guest memory: {:?}", e);
+                        return VIRTIO_BLK_S_IOERR;
                     }
 
                     buffer_offset = end_offset;
@@ -194,13 +186,10 @@ impl BlockRequest {
                 return VIRTIO_BLK_S_IOERR;
             }
 
-            unsafe {
-                let src_ptr = guest_addr.as_usize() as *const u8;
-                core::ptr::copy_nonoverlapping(
-                    src_ptr,
-                    buffer[buffer_offset..end_offset].as_mut_ptr(),
-                    *len,
-                );
+            // Read data from guest memory using safe interface
+            if let Err(e) = read_guest_buffer(*guest_addr, &mut buffer[buffer_offset..end_offset]) {
+                log::error!("Failed to read data from guest memory: {:?}", e);
+                return VIRTIO_BLK_S_IOERR;
             }
 
             buffer_offset = end_offset;

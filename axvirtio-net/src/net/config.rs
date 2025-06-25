@@ -55,6 +55,7 @@ impl VirtioNetConfig {
 
     /// Get the configuration space as bytes
     pub fn as_bytes(&self) -> &[u8] {
+        // Safe because VirtioNetConfig is a simple POD struct with repr(C)
         unsafe {
             core::slice::from_raw_parts(
                 self as *const Self as *const u8,
@@ -98,6 +99,7 @@ impl VirtioNetConfig {
 
     /// Write a field to the configuration space
     pub fn write_config(&mut self, offset: u64, width: usize, value: u32) {
+        // Safe because VirtioNetConfig is a simple POD struct with repr(C)
         let bytes = unsafe {
             core::slice::from_raw_parts_mut(
                 self as *mut Self as *mut u8,

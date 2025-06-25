@@ -6,9 +6,38 @@ pub use available::{AvailableRing, VirtqAvail};
 pub use descriptor::{DescriptorTable, VirtqDesc};
 pub use used::{UsedRing, VirtqUsed, VirtqUsedElem};
 
-use crate::error::{VirtioError, VirtioResult};
+use crate::{error::{VirtioError, VirtioResult}, memory::{read_guest_obj, write_guest_obj}};
 use alloc::vec::Vec;
 use axaddrspace::GuestPhysAddr;
+
+/// VirtIO block request header structure
+#[derive(Debug, Clone, Copy)]
+pub struct VirtioBlockHeader {
+    /// Request type (VIRTIO_BLK_T_IN, VIRTIO_BLK_T_OUT, etc.)
+    pub request_type: u32,
+    /// I/O priority (currently unused)
+    pub ioprio: u32,
+    /// Starting sector number
+    pub sector: u64,
+}
+
+impl VirtioBlockHeader {
+    /// Size of the VirtIO block header in bytes
+    pub const SIZE: u32 = 16; // type (4) + ioprio (4) + sector (8)
+
+    /// Read VirtIO block header from guest memory
+    pub fn read_from_guest(addr: GuestPhysAddr) -> VirtioResult<Self> {
+        let request_type: u32 = read_guest_obj(addr)?;
+        let ioprio: u32 = read_guest_obj(addr + 4)?;
+        let sector: u64 = read_guest_obj(addr + 8)?;
+
+        Ok(Self {
+            request_type,
+            ioprio,
+            sector,
+        })
+    }
+}
 
 /// VirtIO queue implementation
 #[derive(Debug, Clone)]
@@ -21,11 +50,11 @@ pub struct VirtioQueue {
     pub size: u16,
     /// Queue ready flag
     pub ready: bool,
-    /// Descriptor table address
+    /// Descriptor table address (guest physical)
     pub desc_table_addr: GuestPhysAddr,
-    /// Available ring address
+    /// Available ring address (guest physical)
     pub avail_ring_addr: GuestPhysAddr,
-    /// Used ring address
+    /// Used ring address (guest physical)
     pub used_ring_addr: GuestPhysAddr,
     /// Next available index
     pub next_avail: u16,
@@ -212,16 +241,42 @@ impl VirtioQueue {
     }
 
     /// Parse VirtIO block header
-    pub fn parse_virtio_block_header(&self, head_index: u16) -> VirtioResult<(u32, u64)> {
+    pub fn parse_virtio_block_header(&self, head_index: u16) -> VirtioResult<VirtioBlockHeader> {
         if let Some(ref desc_table) = self.desc_table {
             let descriptors = desc_table.follow_chain(head_index)?;
             if descriptors.is_empty() {
                 return Err(VirtioError::InvalidDescriptor);
             }
 
-            // For now, return dummy values
-            // In a real implementation, this would read the header from guest memory
-            Ok((0, 0)) // (request_type, sector)
+            // Get the first descriptor which should contain the request header
+            let header_desc = &descriptors[0];
+
+            // Validate that the first descriptor is readable (not write-only)
+            if header_desc.is_write() {
+                log::warn!("Request header descriptor should not be write-only");
+                return Err(VirtioError::InvalidDescriptor);
+            }
+
+            // Check if the descriptor is large enough to contain the header
+            if header_desc.len < VirtioBlockHeader::SIZE {
+                log::warn!("Request header descriptor too small: {} bytes, need {} bytes",
+                          header_desc.len, VirtioBlockHeader::SIZE);
+                return Err(VirtioError::InvalidDescriptor);
+            }
+
+            // Read the header from guest memory
+            let header_addr = header_desc.guest_addr();
+
+            log::debug!("Reading VirtIO block header from guest address 0x{:x}",
+                       header_addr.as_usize());
+
+            // Use the structured header reading
+            let header = VirtioBlockHeader::read_from_guest(header_addr)?;
+
+            log::debug!("Parsed VirtIO block header: type={}, sector={}",
+                       header.request_type, header.sector);
+
+            Ok(header)
         } else {
             Err(VirtioError::QueueNotReady)
         }
@@ -255,5 +310,26 @@ impl VirtioQueue {
         } else {
             Err(VirtioError::QueueNotReady)
         }
+    }
+
+    /// Write status byte to the status buffer of a descriptor chain
+    ///
+    /// This method writes the status byte to the last descriptor in the chain,
+    /// which should be a write-only descriptor according to VirtIO specification.
+    pub fn write_status_byte(&self, head_index: u16, status: u8) -> VirtioResult<()> {
+        // Get the status descriptor address (last descriptor in chain)
+        let status_addr_guest = self.get_status_addr(head_index)?;
+
+        log::debug!(
+            "Writing status byte {} to guest address 0x{:x} for descriptor chain {}",
+            status,
+            status_addr_guest.as_usize(),
+            head_index
+        );
+
+        // Write the status byte to guest memory using the new memory access interface
+        write_guest_obj(status_addr_guest, status)?;
+
+        Ok(())
     }
 }

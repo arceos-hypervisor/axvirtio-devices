@@ -79,9 +79,6 @@ pub const VIRTIO_BLK_S_OK: u8 = 0;
 /// Block request status: I/O error
 pub const VIRTIO_BLK_S_IOERR: u8 = 1;
 
-/// Block request status: Unsupported operation
-pub const VIRTIO_BLK_S_UNSUPP: u8 = 2;
-
 // ============================================================================
 // Block Device Size and Capacity Constants
 // ============================================================================

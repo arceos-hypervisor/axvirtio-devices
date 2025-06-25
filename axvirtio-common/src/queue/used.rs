@@ -1,5 +1,6 @@
 use crate::constants::*;
 use crate::error::{VirtioError, VirtioResult};
+use crate::memory::{write_guest_obj, read_guest_obj};
 use axaddrspace::GuestPhysAddr;
 
 /// VirtIO used ring element
@@ -131,13 +132,8 @@ impl UsedRing {
         // Create the used element
         let used_elem = VirtqUsedElem::new(id, len);
 
-        // Write the used element to guest memory
-        // In a real implementation, this would use proper guest memory access
-        // For now, we simulate the write operation
-        unsafe {
-            let elem_ptr = elem_addr.as_usize() as *mut VirtqUsedElem;
-            core::ptr::write_volatile(elem_ptr, used_elem);
-        }
+        // Write the used element to guest memory using safe interface
+        write_guest_obj(elem_addr, used_elem)?;
 
         // Update the used index
         self.used_idx = self.used_idx.wrapping_add(1);
@@ -156,10 +152,7 @@ impl UsedRing {
 
         // Write the used index to the header (offset 2 bytes for flags)
         let idx_addr = self.base_addr + 2;
-        unsafe {
-            let idx_ptr = idx_addr.as_usize() as *mut u16;
-            core::ptr::write_volatile(idx_ptr, self.used_idx);
-        }
+        write_guest_obj(idx_addr, self.used_idx)?;
 
         Ok(())
     }
@@ -170,10 +163,7 @@ impl UsedRing {
             return Err(VirtioError::QueueNotReady);
         }
 
-        unsafe {
-            let header_ptr = self.base_addr.as_usize() as *const VirtqUsed;
-            Ok(core::ptr::read_volatile(header_ptr))
-        }
+        read_guest_obj(self.base_addr)
     }
 
     /// Write the used ring header
@@ -182,12 +172,7 @@ impl UsedRing {
             return Err(VirtioError::QueueNotReady);
         }
 
-        unsafe {
-            let header_ptr = self.base_addr.as_usize() as *mut VirtqUsed;
-            core::ptr::write_volatile(header_ptr, *header);
-        }
-
-        Ok(())
+        write_guest_obj(self.base_addr, *header)
     }
 
     /// Get the current used index

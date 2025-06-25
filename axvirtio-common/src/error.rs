@@ -37,6 +37,8 @@ pub enum VirtioError {
     InvalidSector,
     /// Invalid register
     InvalidRegister,
+    /// Invalid address or address translation failed
+    InvalidAddress,
 }
 
 impl VirtioError {
@@ -58,6 +60,7 @@ impl VirtioError {
             VirtioError::InvalidBufferSize => AxError::InvalidInput,
             VirtioError::InvalidSector => AxError::InvalidInput,
             VirtioError::InvalidRegister => AxError::InvalidInput,
+            VirtioError::InvalidAddress => AxError::BadAddress,
         }
     }
 }

@@ -1,5 +1,6 @@
 use crate::constants::*;
 use crate::error::{VirtioError, VirtioResult};
+use crate::memory::{read_guest_obj, write_guest_obj};
 use alloc::vec::Vec;
 use axaddrspace::GuestPhysAddr;
 
@@ -129,10 +130,7 @@ impl DescriptorTable {
 
         let desc_addr = self.desc_addr(index).ok_or(VirtioError::InvalidQueue)?;
 
-        unsafe {
-            let desc_ptr = desc_addr.as_usize() as *const VirtqDesc;
-            Ok(core::ptr::read_volatile(desc_ptr))
-        }
+        read_guest_obj(desc_addr)
     }
 
     /// Write a descriptor to the table
@@ -143,10 +141,7 @@ impl DescriptorTable {
 
         let desc_addr = self.desc_addr(index).ok_or(VirtioError::InvalidQueue)?;
 
-        unsafe {
-            let desc_ptr = desc_addr.as_usize() as *mut VirtqDesc;
-            core::ptr::write_volatile(desc_ptr, *desc);
-        }
+        write_guest_obj(desc_addr, *desc)?;
 
         Ok(())
     }
