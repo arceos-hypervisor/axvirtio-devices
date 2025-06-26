@@ -33,7 +33,7 @@ impl MemoryBackend {
 
         // 写一些 fat32 的初始扇区的内容
         if capacity_sectors >= 34 {
-            let boot_sector = include_bytes!("/home/debin/Codes/arceos-umhv/arm_tiny/ramdisk0.img");
+            let boot_sector = include_bytes!("../../imgs/ramdisk.img");
             data[..boot_sector.len()].copy_from_slice(boot_sector);
         }
 

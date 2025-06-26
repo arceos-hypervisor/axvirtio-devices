@@ -8,7 +8,7 @@ repository.workspace = true
 edition = "2021"
 
 [features]
-default = ["file-backend"]
+default = ["memory-backend"]
 file-backend = ["axfs"]
 memory-backend = []
 

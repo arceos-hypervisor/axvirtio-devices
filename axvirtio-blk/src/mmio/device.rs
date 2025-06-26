@@ -13,7 +13,7 @@ use crate::block::request::BlockRequestType;
 use crate::block::BlockRequest;
 use crate::constants::*;
 use axvirtio_common::{
-     MmioTransport, VirtioConfig, VirtioError, VirtioQueue, VirtioResult,
+     MmioTransport, VirtioConfig, VirtioError, VirtioQueue, VirtioResult
 };
 
 /// VirtIO MMIO device state
@@ -48,8 +48,8 @@ pub struct VirtioMmioDevice {
 
 impl VirtioMmioDevice {
     /// Create a new VirtIO MMIO device with device index
-    pub fn new(device_index: usize) -> VirtioResult<Self> {
-        let config = VirtioConfig::new_block_device(device_index);
+    pub fn new(base_ipa:usize, device_index: usize) -> VirtioResult<Self> {
+        let config = VirtioConfig::new_block_device(base_ipa, device_index);
         let mut queues = Vec::new();
 
         // Create default queue
@@ -60,7 +60,11 @@ impl VirtioMmioDevice {
         let length = config.total_mmio_size;
 
         // Create backend
-        let backend = create_default_backend(device_index)?;
+        let backend = if let Ok(backend) = create_default_backend(device_index) {
+            backend
+        } else {
+            panic!("Create backend error!");
+        };
 
         Ok(Self {
             base_ipa,
@@ -209,18 +213,18 @@ impl VirtioMmioDevice {
             return Ok(());
         }
 
-        // Check if address is within the overall MMIO range
-        let base_mmio = GuestPhysAddr::from(VIRTIO_MMIO_BASE);
-        let max_mmio = GuestPhysAddr::from(VIRTIO_MMIO_BASE + VIRTIO_MMIO_TOTAL_SIZE);
-        if addr < base_mmio || addr >= max_mmio {
+        // Check if address is within the overall MMIO range (self.config.base_addr - self.config.base_addr + self.config.total_mmio_size)
+        let max_mmio = GuestPhysAddr::from(self.config.base_addr.add(self.config.total_mmio_size));
+        if addr < self.config.base_addr || addr >= max_mmio {
             return Ok(());
         }
 
         // Check if address is within this device's specific range based on device_index
-        let device_start = base_mmio + (self.config.device_index * VIRTIO_MMIO_DEVICE_SIZE);
-        let device_end = device_start + VIRTIO_MMIO_DEVICE_SIZE;
+        let device_start =
+            self.config.base_addr + (self.config.device_index * self.config.mmio_size);
+        let device_end = device_start + self.config.mmio_size;
         if addr < device_start || addr >= device_end {
-            // Ignore writes to addresses outside this device's range
+            // Return 0 for addresses outside this device's range
             return Ok(());
         }
 

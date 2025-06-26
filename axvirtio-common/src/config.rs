@@ -26,9 +26,9 @@ pub struct VirtioConfig {
 
 impl VirtioConfig {
     /// Create a new VirtIO configuration with device index and device ID
-    pub fn new(device_index: usize, device_id: u32, device_features: u64, num_queues: u16) -> Self {
+    pub fn new(base_ipa:usize, device_index: usize, device_id: u32, device_features: u64, num_queues: u16) -> Self {
         Self {
-            base_addr: GuestPhysAddr::from(VIRTIO_MMIO_BASE),
+            base_addr: GuestPhysAddr::from(base_ipa),
             mmio_size: VIRTIO_MMIO_DEVICE_SIZE,
             total_mmio_size: VIRTIO_MMIO_TOTAL_SIZE,
             device_id,
@@ -41,24 +41,24 @@ impl VirtioConfig {
     }
 
     /// Create a new block device configuration
-    pub fn new_block_device(device_index: usize) -> Self {
+    pub fn new_block_device(base_ipa:usize, device_index: usize) -> Self {
         // Block device specific features
         let features = VIRTIO_F_VERSION_1 | VIRTIO_F_RING_EVENT_IDX;
-        Self::new(device_index, VIRTIO_DEVICE_ID_BLOCK, features, 1)
+        Self::new(base_ipa,device_index, VIRTIO_DEVICE_ID_BLOCK, features, 1)
     }
 
     /// Create a new network device configuration
-    pub fn new_network_device(device_index: usize) -> Self {
+    pub fn new_network_device(base_ipa:usize, device_index: usize) -> Self {
         // Network device specific features
         let features = VIRTIO_F_VERSION_1 | VIRTIO_F_RING_EVENT_IDX;
-        Self::new(device_index, VIRTIO_DEVICE_ID_NET, features, 2) // RX and TX queues
+        Self::new(base_ipa, device_index, VIRTIO_DEVICE_ID_NET, features, 2) // RX and TX queues
     }
 
     /// Create a new console device configuration
-    pub fn new_console_device(device_index: usize) -> Self {
+    pub fn new_console_device(base_ipa:usize, device_index: usize) -> Self {
         // Console device specific features
         let features = VIRTIO_F_VERSION_1;
-        Self::new(device_index, VIRTIO_DEVICE_ID_CONSOLE, features, 2) // Input and output queues
+        Self::new(base_ipa, device_index, VIRTIO_DEVICE_ID_CONSOLE, features, 2) // Input and output queues
     }
 
     /// Get the actual MMIO address for this device based on device_index
@@ -102,6 +102,6 @@ impl VirtioConfig {
 
 impl Default for VirtioConfig {
     fn default() -> Self {
-        Self::new_block_device(0)
+        Self::new_block_device(VIRTIO_MMIO_BASE,0)
     }
 }
