@@ -6,6 +6,7 @@ use axdevice_base::EmuDeviceType;
 use axaddrspace::{GuestPhysAddr, GuestPhysAddrRange};
 use axerrno::AxError;
 use axerrno::AxResult;
+use log::trace;
 use log::{debug,error};
 use memory_addr::MemoryAddr;
 
@@ -21,7 +22,7 @@ impl BaseDeviceOps<GuestPhysAddrRange> for VirtioMmioDevice {
     }
 
     fn handle_read(&self, addr: GuestPhysAddr, width: AccessWidth) -> AxResult<usize> {
-        error!("MMIO read at address: {:#x}, width: {:?}", addr, width);
+        trace!("MMIO read at address: {:#x}, width: {:?}", addr, width);
         self.mmio_read(addr, width)
     }
 
@@ -31,7 +32,7 @@ impl BaseDeviceOps<GuestPhysAddrRange> for VirtioMmioDevice {
         width: AccessWidth,
         val: usize,
     ) -> Result<(), AxError> {
-        error!("MMIO write at address: {:#x}, width: {:?}, value: {:#x}", addr, width, val);
+        trace!("MMIO write at address: {:#x}, width: {:?}, value: {:#x}", addr, width, val);
         if let Err(e) = self.mmio_write(addr, width, val) {
             debug!("MMIO write error: {:?}", e);
         }
