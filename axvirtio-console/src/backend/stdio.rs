@@ -1,5 +1,6 @@
 use alloc::collections::VecDeque;
 use axvirtio_common::VirtioResult;
+use log::error;
 use spin::Mutex;
 
 use super::traits::ConsoleBackend;
@@ -78,11 +79,24 @@ impl ConsoleBackend for StdioConsoleBackend {
     }
 
     fn read(&self, buffer: &mut [u8]) -> VirtioResult<usize> {
-        let mut input_buffer = self.input_buffer.lock();
+        // self.inject_input(b"AxVisor Hello\n\0");
+        // error!("input_len: {} buffer_len {}", self.input_len(), buffer.len());
+        // let mut input_buffer = self.input_buffer.lock();
+         error!("input_len: {} buffer_len {}", self.input_len(), buffer.len());
         let mut bytes_read = 0;
+        let dummy_data = b"AxVisor Hello\n\0";
 
         for i in 0..buffer.len() {
-            if let Some(byte) = input_buffer.pop_front() {
+            // error!("input_len: {}", self.input_len());
+            // if let Some(byte) = input_buffer.pop_front() {
+            //     error!("byte: {}, bytes_read: {}", byte, bytes_read);
+            //     buffer[i] = byte;
+            //     bytes_read += 1;
+            // } else {
+            //     break;
+            // }
+            let byte = dummy_data[i];
+            if byte != 0 {
                 buffer[i] = byte;
                 bytes_read += 1;
             } else {
@@ -92,7 +106,7 @@ impl ConsoleBackend for StdioConsoleBackend {
 
         if bytes_read > 0 {
             // Update statistics
-            drop(input_buffer);
+            // drop(input_buffer);
             let mut stats = self.stats.lock();
             stats.bytes_read += bytes_read as u64;
 
@@ -112,7 +126,7 @@ impl ConsoleBackend for StdioConsoleBackend {
 
     fn flush(&self) -> VirtioResult<()> {
         // In a real implementation, this would flush stdout
-        log::debug!("Console {}: Flush requested", self.device_index);
+        log::trace!("Console {}: Flush requested", self.device_index);
         Ok(())
     }
 

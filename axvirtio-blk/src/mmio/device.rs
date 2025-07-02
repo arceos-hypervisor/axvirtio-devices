@@ -48,7 +48,7 @@ pub struct VirtioMmioDevice {
 
 impl VirtioMmioDevice {
     /// Create a new VirtIO MMIO device with device index
-    pub fn new(base_ipa:usize, device_index: usize) -> VirtioResult<Self> {
+    pub fn new(base_ipa:usize, device_index: usize, length: usize) -> VirtioResult<Self> {
         let config = VirtioConfig::new_block_device(base_ipa, device_index);
         let mut queues = Vec::new();
 
@@ -57,7 +57,6 @@ impl VirtioMmioDevice {
 
         // Get the actual device MMIO address based on device_index
         let base_ipa = config.get_device_mmio_addr();
-        let length = config.total_mmio_size;
 
         // Create backend
         let backend = if let Ok(backend) = create_default_backend(device_index) {
@@ -405,11 +404,11 @@ impl VirtioMmioDevice {
         trace!(
             "Available index: {}, next_avail: {}",
             avail_idx,
-            queue.next_avail
+            queue.get_last_avail_idx()
         );
 
         // Process new available descriptors
-        let mut current_avail = queue.next_avail;
+        let mut current_avail = queue.get_last_avail_idx();
         let mut processed_requests = Vec::new();
 
         while current_avail != avail_idx {
@@ -428,7 +427,7 @@ impl VirtioMmioDevice {
                 }
             };
 
-            trace!(
+            error!(
                 "Processing descriptor chain starting at index {}",
                 desc_index
             );
@@ -449,8 +448,8 @@ impl VirtioMmioDevice {
         }
 
         // Update next_avail in the queue and handle any error requests
-        if current_avail != queue.next_avail || !processed_requests.is_empty() {
-            let processed_count = current_avail.wrapping_sub(queue.next_avail);
+        if current_avail != queue.get_last_avail_idx() || !processed_requests.is_empty() {
+            let processed_count = current_avail.wrapping_sub(queue.get_last_avail_idx());
             trace!("Processed {} requests", processed_count);
 
             // Update the queue's next_avail index and handle error requests
@@ -507,13 +506,15 @@ impl VirtioMmioDevice {
         };
 
         // Get data buffers
-        let buffers = match queue.get_data_buffers(head_index) {
+        let buffers = match queue.get_data_buffers(head_index, self.config.device_type) {
             Ok(buffers) => buffers,
             Err(e) => {
                 error!("Failed to get data buffers: {:?}", e);
                 return Err(VirtioError::InvalidQueue.into());
             }
         };
+
+         error!("Descriptor chain has {} data buffers", buffers.len());
 
         // Get status address
         let status_addr = match queue.get_status_addr(head_index) {

@@ -8,6 +8,7 @@ pub mod error;
 pub mod memory;
 pub mod mmio;
 pub mod queue;
+mod device_type;
 
 use axaddrspace::GuestPhysAddr;
 // Re-export commonly used types
@@ -17,6 +18,7 @@ use memory_addr::PhysAddr;
 pub use memory::GuestMemoryAccess;
 pub use mmio::transport::MmioTransport;
 pub use queue::VirtioQueue;
+pub use device_type::VirtioDeviceType;
 
 // Re-export commonly used constants
 pub use constants::*;

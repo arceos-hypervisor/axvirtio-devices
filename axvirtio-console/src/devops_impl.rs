@@ -6,14 +6,15 @@ use axdevice_base::EmuDeviceType;
 use axaddrspace::{GuestPhysAddr, GuestPhysAddrRange};
 use axerrno::AxError;
 use axerrno::AxResult;
-use log::{debug, trace};
+use log::debug;
+use log::trace;
 use memory_addr::MemoryAddr;
 
-use crate::mmio::VirtioMmioDevice;
+use crate::VirtioConsoleDevice;
 
-impl BaseDeviceOps<GuestPhysAddrRange> for VirtioMmioDevice {
+impl BaseDeviceOps<GuestPhysAddrRange> for VirtioConsoleDevice {
     fn emu_type(&self) -> EmuDeviceType {
-        EmuDeviceType::EmuDeviceTVirtioBlk
+        EmuDeviceType::EmuDeviceTVirtioConsole
     }
 
     fn address_range(&self) -> GuestPhysAddrRange {
@@ -31,7 +32,12 @@ impl BaseDeviceOps<GuestPhysAddrRange> for VirtioMmioDevice {
         width: AccessWidth,
         val: usize,
     ) -> Result<(), AxError> {
-        trace!("MMIO write at address: {:#x}, width: {:?}, value: {:#x}", addr, width, val);
+        trace!(
+            "MMIO write at address: {:#x}, width: {:?}, value: {:#x}",
+            addr,
+            width,
+            val
+        );
         if let Err(e) = self.mmio_write(addr, width, val) {
             debug!("MMIO write error: {:?}", e);
         }

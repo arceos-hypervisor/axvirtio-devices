@@ -1,7 +1,9 @@
 use alloc::boxed::Box;
 use alloc::vec::Vec;
+use alloc::vec;
 use axaddrspace::{device::AccessWidth, GuestPhysAddr};
 use axerrno::AxResult;
+use log::{info, trace};
 use spin::Mutex;
 
 use axvirtio_common::{constants::*, mmio::MmioTransport, VirtioConfig, VirtioQueue, VirtioResult};
@@ -42,8 +44,12 @@ pub struct VirtioConsoleDevice {
 
 impl VirtioConsoleDevice {
     /// Create a new VirtIO console device with device index
-    pub fn new(device_index: usize) -> VirtioResult<Self> {
-        let config = VirtioConfig::new_console_device(device_index);
+    pub fn new(base_ipa: usize, device_index: usize, length: usize) -> VirtioResult<Self> {
+        info!(
+            "Creating VirtIO console device: base_ipa={:#x}, device_index={}",
+            base_ipa, device_index
+        );
+        let config = VirtioConfig::new_console_device(base_ipa, device_index);
         let mut queues = Vec::new();
 
         // Create RX and TX queues for port 0
@@ -58,7 +64,6 @@ impl VirtioConsoleDevice {
 
         // Get the actual device MMIO address based on device_index
         let base_ipa = config.get_device_mmio_addr();
-        let length = config.total_mmio_size;
 
         // Create backend
         let backend = create_default_backend(device_index)?;
@@ -172,7 +177,7 @@ impl VirtioConsoleDevice {
             _ => 0,
         };
 
-        log::debug!(
+        trace!(
             "Console device {}: MMIO read at offset 0x{:x} = 0x{:x}",
             self.config.device_index,
             offset,
@@ -195,7 +200,7 @@ impl VirtioConsoleDevice {
             return Ok(());
         }
 
-        log::debug!(
+        trace!(
             "Console device {}: MMIO write at offset 0x{:x} = 0x{:x}",
             self.config.device_index,
             offset,
@@ -255,6 +260,60 @@ impl VirtioConsoleDevice {
                     self.reset_device();
                 }
             }
+            VIRTIO_MMIO_QUEUE_DESC_LOW => {
+                let queue_sel = *self.queue_sel.lock();
+                let mut queues = self.queues.lock();
+                if let Some(queue) = queues.get_mut(queue_sel as usize) {
+                    let high = (queue.desc_table_addr.as_usize() >> 32) as u32;
+                    let addr = ((high as u64) << 32) | (val as u64);
+                    let _ = queue.set_desc_table_addr(GuestPhysAddr::from(addr as usize));
+                }
+            }
+            VIRTIO_MMIO_QUEUE_DESC_HIGH => {
+                let queue_sel = *self.queue_sel.lock();
+                let mut queues = self.queues.lock();
+                if let Some(queue) = queues.get_mut(queue_sel as usize) {
+                    let low: u32 = queue.desc_table_addr.as_usize() as u32;
+                    let addr = ((val as u64) << 32) | (low as u64);
+                    let _ = queue.set_desc_table_addr(GuestPhysAddr::from(addr as usize));
+                }
+            }
+            VIRTIO_MMIO_QUEUE_AVAIL_LOW => {
+                let queue_sel = *self.queue_sel.lock();
+                let mut queues = self.queues.lock();
+                if let Some(queue) = queues.get_mut(queue_sel as usize) {
+                    let high = (queue.avail_ring_addr.as_usize() >> 32) as u32;
+                    let addr = ((high as u64) << 32) | (val as u64);
+                    let _ = queue.set_avail_ring_addr(GuestPhysAddr::from(addr as usize));
+                }
+            }
+            VIRTIO_MMIO_QUEUE_AVAIL_HIGH => {
+                let queue_sel = *self.queue_sel.lock();
+                let mut queues = self.queues.lock();
+                if let Some(queue) = queues.get_mut(queue_sel as usize) {
+                    let low = queue.avail_ring_addr.as_usize() as u32;
+                    let addr = ((val as u64) << 32) | (low as u64);
+                    let _ = queue.set_avail_ring_addr(GuestPhysAddr::from(addr as usize));
+                }
+            }
+            VIRTIO_MMIO_QUEUE_USED_LOW => {
+                let queue_sel = *self.queue_sel.lock();
+                let mut queues = self.queues.lock();
+                if let Some(queue) = queues.get_mut(queue_sel as usize) {
+                    let high = (queue.used_ring_addr.as_usize() >> 32) as u32;
+                    let addr = ((high as u64) << 32) | (val as u64);
+                    let _ = queue.set_used_ring_addr(GuestPhysAddr::from(addr as usize));
+                }
+            }
+            VIRTIO_MMIO_QUEUE_USED_HIGH => {
+                let queue_sel = *self.queue_sel.lock();
+                let mut queues = self.queues.lock();
+                if let Some(queue) = queues.get_mut(queue_sel as usize) {
+                    let low = queue.used_ring_addr.as_usize() as u32;
+                    let addr = ((val as u64) << 32) | (low as u64);
+                    let _ = queue.set_used_ring_addr(GuestPhysAddr::from(addr as usize));
+                }
+            }
             _ if offset >= VIRTIO_MMIO_CONFIG => {
                 // Configuration space access
                 let config_offset = offset - VIRTIO_MMIO_CONFIG as usize;
@@ -282,7 +341,7 @@ impl VirtioConsoleDevice {
 
     /// Handle queue notification
     fn handle_queue_notify(&self, queue_index: u16) {
-        log::debug!(
+        trace!(
             "Console device {}: Queue {} notification",
             self.config.device_index,
             queue_index
@@ -309,27 +368,537 @@ impl VirtioConsoleDevice {
 
     /// Handle RX queue (receive buffers from guest)
     fn handle_rx_queue(&self) {
-        log::debug!(
+        trace!(
             "Console device {}: Processing RX queue",
             self.config.device_index
         );
-        // In a real implementation, this would:
-        // 1. Check for available receive buffers in the RX queue
-        // 2. Try to read input from the backend
-        // 3. Copy input data to guest buffers
-        // 4. Update the used ring
+
+        // Check if device is ready
+        if !self.is_device_ready() {
+            log::warn!("Console device not ready, ignoring RX queue notification");
+            return;
+        }
+
+        // Get a copy of the TX queue to avoid holding the lock during processing
+        let queue_copy = {
+            let queues = self.queues.lock();
+            match queues.get(VIRTIO_CONSOLE_RX_QUEUE as usize) {
+                Some(q) if q.ready => q.clone(),
+                Some(_) => {
+                    log::warn!("TX queue not ready");
+                    return;
+                }
+                None => {
+                    log::warn!("Invalid TX queue index");
+                    return;
+                }
+            }
+        }; // Lock is released here
+
+        // Check if queue addresses are set
+        if queue_copy.desc_table_addr.as_usize() == 0
+            || queue_copy.avail_ring_addr.as_usize() == 0
+            || queue_copy.used_ring_addr.as_usize() == 0
+        {
+            log::warn!("TX queue addresses not properly set");
+            return;
+        }
+
+        // Process available requests in the queue
+        self.process_rx_queue_requests(&queue_copy);
     }
 
     /// Handle TX queue (data to output from guest)
     fn handle_tx_queue(&self) {
-        log::debug!(
+        trace!(
             "Console device {}: Processing TX queue",
             self.config.device_index
         );
-        // In a real implementation, this would:
-        // 1. Read data from the TX queue descriptors
-        // 2. Send data to the backend for output
-        // 3. Update the used ring with transmission status
+
+        // Check if device is ready
+        if !self.is_device_ready() {
+            log::warn!("Console device not ready, ignoring TX queue notification");
+            return;
+        }
+
+        // Get a copy of the TX queue to avoid holding the lock during processing
+        let queue_copy = {
+            let queues = self.queues.lock();
+            match queues.get(VIRTIO_CONSOLE_TX_QUEUE as usize) {
+                Some(q) if q.ready => q.clone(),
+                Some(_) => {
+                    log::warn!("TX queue not ready");
+                    return;
+                }
+                None => {
+                    log::warn!("Invalid TX queue index");
+                    return;
+                }
+            }
+        }; // Lock is released here
+
+        // Check if queue addresses are set
+        if queue_copy.desc_table_addr.as_usize() == 0
+            || queue_copy.avail_ring_addr.as_usize() == 0
+            || queue_copy.used_ring_addr.as_usize() == 0
+        {
+            log::warn!("TX queue addresses not properly set");
+            return;
+        }
+
+        // Process available requests in the queue
+        self.process_tx_queue_requests(&queue_copy);
+    }
+
+    /// Process TX queue requests
+    fn process_tx_queue_requests(&self, queue: &axvirtio_common::VirtioQueue) {
+        use log::{error, trace};
+
+        // Read the available ring index to see if there are new requests
+        let avail_idx = match queue.read_avail_idx() {
+            Ok(idx) => idx,
+            Err(e) => {
+                error!("Failed to read available index: {:?}", e);
+                return;
+            }
+        };
+
+        trace!(
+            "TX queue available index: {}, next_avail: {}",
+            avail_idx,
+            queue.get_last_avail_idx()
+        );
+
+        // Process new available descriptors
+        let mut current_avail = queue.get_last_avail_idx();
+        let mut processed_requests = Vec::new();
+
+        while current_avail != avail_idx {
+            // Get descriptor index from available ring
+            let ring_index = current_avail % queue.size;
+            let desc_index = match queue.read_avail_entry(ring_index) {
+                Ok(idx) => idx,
+                Err(e) => {
+                    error!(
+                        "Failed to read available ring entry {}: {:?}",
+                        ring_index, e
+                    );
+                    current_avail = current_avail.wrapping_add(1);
+                    continue;
+                }
+            };
+
+            trace!(
+                "Processing TX descriptor chain starting at index {}",
+                desc_index
+            );
+
+            // Process the descriptor chain
+            match self.process_tx_descriptor_chain(queue, desc_index) {
+                Ok(bytes_written) => {
+                    // Store successful request for later processing
+                    processed_requests.push((desc_index, bytes_written as u32, 0));
+                    // Status = 0 (success)
+                }
+                Err(e) => {
+                    error!(
+                        "Failed to process TX descriptor chain {}: {:?}",
+                        desc_index, e
+                    );
+                    // Store error request for later processing
+                    processed_requests.push((desc_index, 0, 1)); // Status = 1 (error)
+                }
+            }
+
+            current_avail = current_avail.wrapping_add(1);
+        }
+
+        // Update next_avail in the queue and handle processed requests
+        if current_avail != queue.get_last_avail_idx() || !processed_requests.is_empty() {
+            let processed_count = current_avail.wrapping_sub(queue.get_last_avail_idx());
+            trace!("Processed {} TX requests", processed_count);
+
+            // Update the queue's next_avail index and handle processed requests
+            let mut queues = self.queues.lock();
+            if let Some(queue_mut) = queues.get_mut(VIRTIO_CONSOLE_TX_QUEUE as usize) {
+                queue_mut.update_last_avail_idx(current_avail);
+
+                // Handle processed requests
+                for (desc_index, len, status) in processed_requests {
+                    self.add_used_tx_buffer(queue_mut, desc_index, len, status as u8);
+                }
+            }
+        }
+    }
+
+    /// Process RX queue requests
+    fn process_rx_queue_requests(&self, queue: &axvirtio_common::VirtioQueue) {
+        use log::{error, trace, warn};
+        let mut input_buffer = vec![0u8; 512];
+
+        let bytes_read = match self.backend.read(&mut input_buffer) {
+            Ok(0) => {
+                trace!("No input data available from backend");
+                return; // No data available
+            }
+            Ok(n) => {
+                input_buffer.truncate(n);
+                trace!("Read {} bytes from console backend", n);
+                n
+            }
+            Err(e) => {
+                error!("Failed to read from console backend: {:?}", e);
+                return;
+            }
+        };
+
+        // Read the available ring index to see if there are new requests
+        let avail_idx = match queue.read_avail_idx() {
+            Ok(idx) => idx,
+            Err(e) => {
+                error!("Failed to read available index: {:?}", e);
+                return;
+            }
+        };
+
+        trace!(
+            "RX queue available index: {}, next_avail: {}",
+            avail_idx,
+            queue.get_last_avail_idx()
+        );
+
+        // Process available receive buffers and fill them with input data
+        let mut current_avail = queue.get_last_avail_idx();
+        let mut data_offset = 0;
+        let mut processed_requests = Vec::new();
+
+        while current_avail != avail_idx && data_offset < bytes_read {
+            // Get descriptor index from available ring
+            let ring_index = current_avail % queue.size;
+            let desc_index = match queue.read_avail_entry(ring_index) {
+                Ok(idx) => idx,
+                Err(e) => {
+                    error!(
+                        "Failed to read available ring entry {}: {:?}",
+                        ring_index, e
+                    );
+                    current_avail = current_avail.wrapping_add(1);
+                    continue;
+                }
+            };
+
+            trace!(
+                "Processing RX descriptor chain starting at index {}",
+                desc_index
+            );
+
+            // Process the descriptor chain and fill with input data
+            match self.process_rx_descriptor_chain(
+                queue,
+                desc_index,
+                &input_buffer[data_offset..bytes_read],
+            ) {
+                Ok(bytes_consumed) => {
+                    // Store successful request for later processing
+                    processed_requests.push((desc_index, bytes_consumed as u32, 0)); // Status = 0 (success)
+                    data_offset += bytes_consumed;
+                    trace!("Filled RX buffer with {} bytes", bytes_consumed);
+                }
+                Err(e) => {
+                    error!(
+                        "Failed to process RX descriptor chain {}: {:?}",
+                        desc_index, e
+                    );
+                    // Store error request for later processing
+                    processed_requests.push((desc_index, 0, 1)); // Status = 1 (error)
+                }
+            }
+
+            current_avail = current_avail.wrapping_add(1);
+        }
+
+        // Update next_avail in the queue and handle processed requests
+        if current_avail != queue.get_last_avail_idx() || !processed_requests.is_empty() {
+            let processed_count = current_avail.wrapping_sub(queue.get_last_avail_idx());
+            trace!("Processed {} RX requests", processed_count);
+
+            // Update the queue's next_avail index and handle processed requests
+            let mut queues = self.queues.lock();
+            if let Some(queue_mut) = queues.get_mut(VIRTIO_CONSOLE_RX_QUEUE as usize) {
+                queue_mut.update_last_avail_idx(current_avail);
+
+                // Handle processed requests
+                for (desc_index, len, status) in processed_requests {
+                    self.add_used_rx_buffer(queue_mut, desc_index, len, status as u8);
+                }
+            }
+        }
+
+        // If we have remaining data, we might want to trigger another processing cycle
+        if data_offset < bytes_read {
+            warn!(
+            "Still have {} bytes of input data remaining after processing all available RX buffers",
+            bytes_read - data_offset
+        );
+            // In a real implementation, you might want to cache this data for the next RX notification
+        }
+    }
+
+    /// Process a single TX descriptor chain
+    fn process_tx_descriptor_chain(
+        &self,
+        queue: &axvirtio_common::VirtioQueue,
+        head_index: u16,
+    ) -> axerrno::AxResult<usize> {
+        use log::{error, trace};
+
+        // Get data buffers from the descriptor chain
+        let buffers = match queue.get_data_buffers(head_index, self.config.device_type) {
+            Ok(buffers) => buffers,
+            Err(e) => {
+                error!("Failed to get data buffers: {:?}", e);
+                return Err(axvirtio_common::VirtioError::InvalidQueue.into());
+            }
+        };
+
+        trace!("TX descriptor chain has {} data buffers", buffers.len());
+
+        let mut total_bytes_written = 0;
+
+        // Process each data buffer
+        for (addr, size, is_write) in buffers {
+            // For TX queue, buffers should be read-only (not write)
+            if is_write {
+                log::warn!("TX buffer should be read-only, but found write flag");
+                continue;
+            }
+
+            // Read data from guest memory
+            let mut buffer = Vec::with_capacity(size);
+            buffer.resize(size, 0u8);
+
+            if let Err(e) = axvirtio_common::memory::read_guest_buffer(addr, &mut buffer) {
+                error!("Failed to read guest memory at {:?}: {:?}", addr, e);
+                return Err(axvirtio_common::VirtioError::MemoryError.into());
+            }
+
+            // Send data to the backend for output
+            match self.backend.write(&buffer) {
+                Ok(bytes_written) => {
+                    total_bytes_written += bytes_written;
+                    trace!("Wrote {} bytes to console backend", bytes_written);
+                }
+                Err(e) => {
+                    error!("Failed to write to console backend: {:?}", e);
+                    return Err(axvirtio_common::VirtioError::BackendError.into());
+                }
+            }
+        }
+
+        // Flush the backend to ensure data is output
+        if let Err(e) = self.backend.flush() {
+            error!("Failed to flush console backend: {:?}", e);
+            return Err(axvirtio_common::VirtioError::BackendError.into());
+        }
+
+        Ok(total_bytes_written)
+    }
+
+    /// Process a single RX descriptor chain and fill it with input data
+    fn process_rx_descriptor_chain(
+        &self,
+        queue: &axvirtio_common::VirtioQueue,
+        head_index: u16,
+        input_data: &[u8],
+    ) -> axerrno::AxResult<usize> {
+        use log::{error, trace, warn};
+
+        if input_data.is_empty() {
+            return Ok(0);
+        }
+
+        // Get receive buffers from the descriptor chain
+        let buffers = match queue.get_data_buffers(head_index, self.config.device_type) {
+            Ok(buffers) => buffers,
+            Err(e) => {
+                error!("Failed to get data buffers: {:?}", e);
+                return Err(axvirtio_common::VirtioError::InvalidQueue.into());
+            }
+        };
+
+        trace!("RX descriptor chain has {} receive buffers", buffers.len());
+
+        let mut total_bytes_written = 0;
+        let mut data_offset = 0;
+
+        // Process each receive buffer
+        for (addr, size, is_write) in buffers {
+            // For RX queue, buffers should be write-only (guest provides empty buffers to fill)
+            if !is_write {
+                warn!("RX buffer should be write-only, but found read flag");
+                continue;
+            }
+
+            if data_offset >= input_data.len() {
+                break; // No more input data to write
+            }
+
+            // Calculate how much data to copy to this buffer
+            let remaining_input = input_data.len() - data_offset;
+            let bytes_to_copy = size.min(remaining_input);
+
+            if bytes_to_copy == 0 {
+                break;
+            }
+
+            // Write data to guest memory
+            let data_slice = &input_data[data_offset..data_offset + bytes_to_copy];
+            if let Err(e) = axvirtio_common::memory::write_guest_buffer(addr, data_slice) {
+                error!("Failed to write guest memory at {:?}: {:?}", addr, e);
+                return Err(axvirtio_common::VirtioError::MemoryError.into());
+            }
+
+            total_bytes_written += bytes_to_copy;
+            data_offset += bytes_to_copy;
+            trace!("Wrote {} bytes to RX buffer at {:?}", bytes_to_copy, addr);
+
+            // If this buffer is full and we still have data, continue to next buffer
+            if bytes_to_copy == size && data_offset < input_data.len() {
+                continue;
+            } else {
+                // This buffer is not full or we've consumed all input data
+                break;
+            }
+        }
+
+        trace!(
+            "Total bytes written to RX descriptor chain: {}",
+            total_bytes_written
+        );
+        Ok(total_bytes_written)
+    }
+
+    /// Add a used buffer to the TX used ring
+    fn add_used_tx_buffer(
+        &self,
+        queue: &mut axvirtio_common::VirtioQueue,
+        desc_index: u16,
+        len: u32,
+        status: u8,
+    ) {
+        use log::{error, trace};
+
+        trace!(
+            "Completing TX request: desc_index={}, len={}, status={}",
+            desc_index,
+            len,
+            status
+        );
+
+        // Write the status byte to the status buffer if there's a status descriptor
+        // Note: Console TX typically doesn't have a separate status descriptor like block devices
+        // The status is conveyed through the used ring entry
+
+        // Add the used buffer to the used ring
+        if let Err(e) = queue.add_used(desc_index, len) {
+            error!("Failed to add used buffer: {:?}", e);
+            return;
+        }
+
+        // Check if we should notify the driver
+        match queue.should_notify() {
+            Ok(should_notify) => {
+                if should_notify {
+                    self.trigger_tx_interrupt();
+                }
+            }
+            Err(e) => {
+                error!("Failed to check notification requirement: {:?}", e);
+            }
+        }
+    }
+
+    /// Add a used buffer to the RX used ring
+    fn add_used_rx_buffer(
+        &self,
+        queue: &mut axvirtio_common::VirtioQueue,
+        desc_index: u16,
+        len: u32,
+        status: u8,
+    ) {
+        use log::{error, trace};
+
+        trace!(
+            "Completing RX request: desc_index={}, len={}, status={}",
+            desc_index,
+            len,
+            status
+        );
+
+        // For console RX, the length indicates how much data was actually written to the buffer
+        // Add the used buffer to the used ring
+        if let Err(e) = queue.add_used(desc_index, len) {
+            error!("Failed to add used buffer: {:?}", e);
+            return;
+        }
+
+        // Check if we should notify the driver
+        match queue.should_notify() {
+            Ok(should_notify) => {
+                if should_notify {
+                    self.trigger_rx_interrupt();
+                }
+            }
+            Err(e) => {
+                error!("Failed to check notification requirement: {:?}", e);
+            }
+        }
+    }
+
+    /// Trigger an interrupt to notify the driver about TX completion
+    fn trigger_tx_interrupt(&self) {
+        use axvirtio_common::constants::*;
+
+        // Set the used buffer notification bit
+        {
+            let mut interrupt_status = self.interrupt_status.lock();
+            *interrupt_status |= VIRTIO_MMIO_INT_VRING;
+        }
+
+        // In a real implementation, this would trigger an actual interrupt
+        // For now, we just log the event
+        trace!(
+            "Console device {}: TX interrupt triggered",
+            self.config.device_index
+        );
+    }
+
+    /// Trigger an interrupt to notify the driver about RX data availability
+    fn trigger_rx_interrupt(&self) {
+        use axvirtio_common::constants::*;
+
+        // Set the used buffer notification bit
+        {
+            let mut interrupt_status = self.interrupt_status.lock();
+            *interrupt_status |= VIRTIO_MMIO_INT_VRING;
+        }
+
+        // In a real implementation, this would trigger an actual interrupt
+        // For now, we just log the event
+        trace!(
+            "Console device {}: RX interrupt triggered",
+            self.config.device_index
+        );
+    }
+
+    /// Check if the device is ready for operations
+    fn is_device_ready(&self) -> bool {
+        const DEVICE_READY_STATUS: u32 = axvirtio_common::constants::VIRTIO_STATUS_ACKNOWLEDGE
+            | axvirtio_common::constants::VIRTIO_STATUS_DRIVER
+            | axvirtio_common::constants::VIRTIO_STATUS_DRIVER_OK;
+
+        let status = *self.status.lock();
+        (status & DEVICE_READY_STATUS) == DEVICE_READY_STATUS
     }
 
     /// Reset the device

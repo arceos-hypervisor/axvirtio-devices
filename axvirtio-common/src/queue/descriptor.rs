@@ -1,6 +1,6 @@
-use crate::constants::*;
 use crate::error::{VirtioError, VirtioResult};
 use crate::memory::{read_guest_obj, write_guest_obj};
+use crate::{constants::*, VirtioDeviceType};
 use alloc::vec::Vec;
 use axaddrspace::GuestPhysAddr;
 
@@ -213,20 +213,31 @@ impl DescriptorTable {
     pub fn get_data_buffers(
         &self,
         head_index: u16,
+        device_type: VirtioDeviceType,
     ) -> VirtioResult<Vec<(GuestPhysAddr, usize, bool)>> {
         let descriptors = self.follow_chain(head_index)?;
 
-        if descriptors.len() < 2 {
+        if descriptors.len() < 2 && device_type == VirtioDeviceType::Block {
             return Ok(Vec::new());
         }
 
         let mut buffers = Vec::new();
-        for desc in &descriptors[1..descriptors.len() - 1] {
-            buffers.push((
-                GuestPhysAddr::from(desc.addr as usize),
-                desc.len as usize,
-                desc.is_write(),
-            ));
+        if device_type == VirtioDeviceType::Block {
+            for desc in &descriptors[1..descriptors.len() - 1] {
+                buffers.push((
+                    GuestPhysAddr::from(desc.addr as usize),
+                    desc.len as usize,
+                    desc.is_write(),
+                ));
+            }
+        } else {
+            for desc in &descriptors {
+                buffers.push((
+                    GuestPhysAddr::from(desc.addr as usize),
+                    desc.len as usize,
+                    desc.is_write(),
+                ));
+            }
         }
 
         Ok(buffers)
