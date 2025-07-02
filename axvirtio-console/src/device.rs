@@ -3,7 +3,7 @@ use alloc::vec::Vec;
 use alloc::vec;
 use axaddrspace::{device::AccessWidth, GuestPhysAddr};
 use axerrno::AxResult;
-use log::{info, trace};
+use log::{error, info, trace};
 use spin::Mutex;
 
 use axvirtio_common::{constants::*, mmio::MmioTransport, VirtioConfig, VirtioQueue, VirtioResult};
@@ -372,6 +372,15 @@ impl VirtioConsoleDevice {
             "Console device {}: Processing RX queue",
             self.config.device_index
         );
+
+        // First, poll for new input from host console if using stdio backend
+        #[cfg(feature = "stdio-backend")]
+        {
+            use crate::backend::StdioConsoleBackend;
+            if let Some(stdio_backend) = self.backend.as_any().downcast_ref::<StdioConsoleBackend>() {
+                stdio_backend.poll_host_input();
+            }
+        }
 
         // Check if device is ready
         if !self.is_device_ready() {

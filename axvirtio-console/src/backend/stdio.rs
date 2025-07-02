@@ -1,10 +1,26 @@
 use alloc::collections::VecDeque;
+use alloc::vec::Vec;
 use axvirtio_common::VirtioResult;
-use log::error;
+use log::{error, info, trace};
 use spin::Mutex;
 
 use super::traits::ConsoleBackend;
 use crate::constants::*;
+use std::format;
+use std::fs::{File, OpenOptions};
+use std::io::{Seek, SeekFrom, Read, Write};
+
+/// Maximum output buffer size in bytes (64KB)
+const MAX_OUTPUT_BUFFER_SIZE: usize = 65536;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(u32)]
+enum CmdType {
+    AltF1,
+    AltF2,
+    AltF3,
+    None
+}
 
 /// Standard I/O console backend
 pub struct StdioConsoleBackend {
@@ -14,6 +30,8 @@ pub struct StdioConsoleBackend {
     size: Mutex<(u16, u16)>,
     /// Input buffer for simulation
     input_buffer: Mutex<VecDeque<u8>>,
+    /// Output buffer for caching written data
+    output_buffer: Mutex<Vec<u8>>,
     /// Statistics
     stats: Mutex<ConsoleStats>,
 }
@@ -21,16 +39,27 @@ pub struct StdioConsoleBackend {
 #[derive(Debug, Default)]
 struct ConsoleStats {
     bytes_written: u64,
-    bytes_read: u64,
+    bytes_read: u64
 }
 
 impl StdioConsoleBackend {
     /// Create a new stdio console backend
     pub fn new(device_index: usize) -> Self {
+        let file_path = format!("/virtio_console_{}", device_index);
+        // 新建一个文件, 如果文件存在，则删除再重新创建
+        let _ = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&file_path);
+        let _ = OpenOptions::new()
+            .read(true)
+            .open(&file_path);
         Self {
             device_index,
             size: Mutex::new((VIRTIO_CONSOLE_DEFAULT_COLS, VIRTIO_CONSOLE_DEFAULT_ROWS)),
             input_buffer: Mutex::new(VecDeque::new()),
+            output_buffer: Mutex::new(Vec::new()),
             stats: Mutex::new(ConsoleStats::default()),
         }
     }
@@ -52,14 +81,94 @@ impl StdioConsoleBackend {
     pub fn input_len(&self) -> usize {
         self.input_buffer.lock().len()
     }
+
+    pub fn stdin_read(&self, buf: &mut [u8]) -> usize {
+        let mut read_len = 0;
+        while read_len < buf.len() {
+            let len = super::pl011::read_bytes(buf);
+            if len == 0 {
+                break;
+            }
+            read_len += len;
+        }
+        read_len
+    }
+
+    pub fn stdout_write(&self, buf: &[u8]) -> usize {
+        super::pl011::write_bytes(buf);
+        buf.len()
+    }
+
+    /// Poll host console for input and inject into buffer
+    /// This should be called periodically by the hypervisor
+    pub fn poll_host_input(&self) {
+        // Read from host console (UART/platform console)
+        let mut temp_buffer = [0u8; 256];
+
+        // Try to read from stdin (should be non-blocking)
+        // Use a timeout or try_lock to avoid deadlocks
+        let bytes_read = self.stdin_read(&mut temp_buffer);
+
+        // Only try to acquire lock if we have data to inject
+        if bytes_read > 0 {
+            // Try to acquire the lock with a timeout to avoid deadlock
+            if let Some(mut buffer) = self.input_buffer.try_lock() {
+                for &byte in &temp_buffer[..bytes_read] {
+                    buffer.push_back(byte);
+                }
+
+                trace!(
+                    "Console {}: Polled {} bytes from host console",
+                    self.device_index,
+                    bytes_read
+                );
+            } else {
+                log::warn!(
+                    "Console {}: Could not acquire input buffer lock, dropping {} bytes",
+                    self.device_index,
+                    bytes_read
+                );
+            }
+        }
+    }
 }
 
 impl ConsoleBackend for StdioConsoleBackend {
+    fn as_any(&self) -> &dyn core::any::Any {
+        self
+    }
+
     fn write(&self, data: &[u8]) -> VirtioResult<usize> {
+        // Cache the data in output buffer with FIFO overflow handling
+        {
+            let mut output_buffer = self.output_buffer.lock();
+            
+            // Check if we need to remove old data to make room
+            if output_buffer.len() + data.len() > MAX_OUTPUT_BUFFER_SIZE {
+                let excess = output_buffer.len() + data.len() - MAX_OUTPUT_BUFFER_SIZE;
+                output_buffer.drain(..excess);
+            }
+            
+            // Add new data to the buffer
+            output_buffer.extend_from_slice(data);
+
+            // 检查最后 6 个字节
+            if output_buffer.len() >= 6 {
+                let last_bytes = &output_buffer[output_buffer.len() - 6..];
+                if last_bytes == b"^[1;9P" { // Alt+F1
+                    info!("Console {}: Detected Alt+F1", self.device_index);
+                } else if last_bytes == b"^[1;9Q" { // Alt+F2
+                    info!("Console {}: Detected Alt+F2", self.device_index);
+                } else if last_bytes == b"^[1;9R" { // Alt+F3
+                    info!("Console {}: Detected Alt+F3", self.device_index);
+                }
+            }
+        }
+
         // In a real implementation, this would write to stdout/stderr
         // For now, we just log the output
         if let Ok(text) = core::str::from_utf8(data) {
-            log::info!("Console {}: {}", self.device_index, text.trim_end());
+            self.stdout_write(text.as_bytes());
         } else {
             log::info!(
                 "Console {}: Binary data ({} bytes): {:?}",
@@ -79,24 +188,11 @@ impl ConsoleBackend for StdioConsoleBackend {
     }
 
     fn read(&self, buffer: &mut [u8]) -> VirtioResult<usize> {
-        // self.inject_input(b"AxVisor Hello\n\0");
-        // error!("input_len: {} buffer_len {}", self.input_len(), buffer.len());
-        // let mut input_buffer = self.input_buffer.lock();
-         error!("input_len: {} buffer_len {}", self.input_len(), buffer.len());
+        let mut input_buffer = self.input_buffer.lock();
         let mut bytes_read = 0;
-        let dummy_data = b"AxVisor Hello\n\0";
 
         for i in 0..buffer.len() {
-            // error!("input_len: {}", self.input_len());
-            // if let Some(byte) = input_buffer.pop_front() {
-            //     error!("byte: {}, bytes_read: {}", byte, bytes_read);
-            //     buffer[i] = byte;
-            //     bytes_read += 1;
-            // } else {
-            //     break;
-            // }
-            let byte = dummy_data[i];
-            if byte != 0 {
+            if let Some(byte) = input_buffer.pop_front() {
                 buffer[i] = byte;
                 bytes_read += 1;
             } else {
@@ -110,14 +206,15 @@ impl ConsoleBackend for StdioConsoleBackend {
             let mut stats = self.stats.lock();
             stats.bytes_read += bytes_read as u64;
 
-            log::debug!(
-                "Console {}: Read {} bytes from input",
+            trace!(
+                "Console {}: Read {} bytes from input: {:?}",
                 self.device_index,
-                bytes_read
+                bytes_read,
+                &buffer[..bytes_read]
             );
+            return Ok(bytes_read);
         }
-
-        Ok(bytes_read)
+        Ok(1)
     }
 
     fn has_input(&self) -> bool {
@@ -178,11 +275,15 @@ impl ConsoleBackend for StdioConsoleBackend {
 
     fn emergency_write(&self, ch: u8) -> VirtioResult<()> {
         // Emergency write bypasses normal buffering
-        log::warn!("Console {}: Emergency write: '{}'", self.device_index, ch as char);
-        
+        log::warn!(
+            "Console {}: Emergency write: '{}'",
+            self.device_index,
+            ch as char
+        );
+
         // In a real implementation, this would write directly to stderr
         // or use a special emergency output mechanism
-        
+
         Ok(())
     }
 }

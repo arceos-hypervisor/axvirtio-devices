@@ -2,6 +2,8 @@ use axvirtio_common::VirtioResult;
 
 /// Trait for console device backends
 pub trait ConsoleBackend: Send + Sync {
+    /// Get a reference to the backend as Any for downcasting
+    fn as_any(&self) -> &dyn core::any::Any;
     /// Write data to the console output
     ///
     /// # Arguments

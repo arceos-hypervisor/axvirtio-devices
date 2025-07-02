@@ -52,6 +52,10 @@ impl SocketConsoleBackend {
 }
 
 impl ConsoleBackend for SocketConsoleBackend {
+    fn as_any(&self) -> &dyn core::any::Any {
+        self
+    }
+
     fn write(&self, data: &[u8]) -> VirtioResult<usize> {
         if !self.connected {
             return Err(VirtioError::DeviceNotReady);

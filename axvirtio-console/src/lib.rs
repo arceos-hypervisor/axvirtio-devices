@@ -2,6 +2,8 @@
 
 extern crate alloc;
 
+extern crate axstd as std;
+
 pub mod backend;
 pub mod console;
 pub mod constants;

@@ -23,6 +23,8 @@ pub use file::FileConsoleBackend;
 
 use axvirtio_common::VirtioResult;
 
+mod pl011;
+
 /// Create a default console backend based on available features
 pub fn create_default_backend(device_index: usize) -> VirtioResult<Box<dyn ConsoleBackend>> {
     #[cfg(feature = "stdio-backend")]

@@ -427,7 +427,7 @@ impl VirtioMmioDevice {
                 }
             };
 
-            error!(
+            trace!(
                 "Processing descriptor chain starting at index {}",
                 desc_index
             );
@@ -514,7 +514,7 @@ impl VirtioMmioDevice {
             }
         };
 
-         error!("Descriptor chain has {} data buffers", buffers.len());
+         trace!("Descriptor chain has {} data buffers", buffers.len());
 
         // Get status address
         let status_addr = match queue.get_status_addr(head_index) {

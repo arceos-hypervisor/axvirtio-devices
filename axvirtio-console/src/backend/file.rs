@@ -69,6 +69,10 @@ impl FileConsoleBackend {
 }
 
 impl ConsoleBackend for FileConsoleBackend {
+    fn as_any(&self) -> &dyn core::any::Any {
+        self
+    }
+
     fn write(&self, data: &[u8]) -> VirtioResult<usize> {
         if !self.initialized {
             return Err(VirtioError::DeviceNotReady);
