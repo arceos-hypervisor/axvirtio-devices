@@ -7,21 +7,10 @@ use spin::Mutex;
 use super::traits::ConsoleBackend;
 use crate::constants::*;
 use std::format;
-use std::fs::{File, OpenOptions};
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::fs::OpenOptions;
 
 /// Maximum output buffer size in bytes (64KB)
 const MAX_OUTPUT_BUFFER_SIZE: usize = 65536;
-const MAX_INPUT_CACHE_BUFFER_SIZE: usize = 65536;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[repr(u32)]
-enum CmdType {
-    AltF1,
-    AltF2,
-    AltF3,
-    None,
-}
 
 /// Standard I/O console backend
 pub struct StdioConsoleBackend {
@@ -33,8 +22,6 @@ pub struct StdioConsoleBackend {
     input_buffer: Mutex<VecDeque<u8>>,
     /// Output buffer for caching written data
     output_buffer: Mutex<Vec<u8>>,
-    /// Input Cache for commands
-    input_cache: Mutex<VecDeque<CmdType>>,
     /// Statistics
     stats: Mutex<ConsoleStats>,
 }
@@ -61,7 +48,6 @@ impl StdioConsoleBackend {
             size: Mutex::new((VIRTIO_CONSOLE_DEFAULT_COLS, VIRTIO_CONSOLE_DEFAULT_ROWS)),
             input_buffer: Mutex::new(VecDeque::new()),
             output_buffer: Mutex::new(Vec::new()),
-            input_cache: Mutex::new(VecDeque::new()),
             stats: Mutex::new(ConsoleStats::default()),
         }
     }

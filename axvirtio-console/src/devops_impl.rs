@@ -7,7 +7,6 @@ use axaddrspace::{GuestPhysAddr, GuestPhysAddrRange};
 use axerrno::AxError;
 use axerrno::AxResult;
 use log::debug;
-use log::error;
 use log::trace;
 use memory_addr::MemoryAddr;
 

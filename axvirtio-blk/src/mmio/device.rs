@@ -4,7 +4,6 @@ use axaddrspace::{device::AccessWidth, GuestPhysAddr};
 use axerrno::AxResult;
 
 use log::{error, info, trace, warn};
-use memory_addr::MemoryAddr;
 use spin::Mutex;
 
 use crate::backend::{create_default_backend, BlockBackend};
