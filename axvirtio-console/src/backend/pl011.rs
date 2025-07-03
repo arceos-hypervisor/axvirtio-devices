@@ -1,7 +1,7 @@
 use arm_pl011::Pl011Uart;
 use kspin::SpinNoIrq;
 
-static PL011_UART_BASE: usize = 0x0900_0000; // Base address for PL011 UART, as per the configuration.
+static PL011_UART_BASE: usize = 0x0904_0000; // Base address for PL011 UART, as per the configuration.
 static UART: SpinNoIrq<Pl011Uart> = SpinNoIrq::new(Pl011Uart::new(PL011_UART_BASE as *mut u8));
 
 /// Writes a byte to the console.
