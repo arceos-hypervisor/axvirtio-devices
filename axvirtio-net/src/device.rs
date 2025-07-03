@@ -52,7 +52,6 @@ impl VirtioNetDevice {
         queues.push(VirtioQueue::new(VIRTIO_NET_TX_QUEUE, config.max_queue_size));
 
         // Get the actual device MMIO address based on device_index
-        let base_ipa = config.get_device_mmio_addr();
         let length = config.total_mmio_size;
 
         // Create backend
@@ -82,16 +81,6 @@ impl VirtioNetDevice {
     /// Check if device index is valid
     pub fn is_enabled(&self) -> bool {
         self.config.is_valid_device_index()
-    }
-
-    /// Check if an address is within this device's MMIO range
-    pub fn is_address_in_range(&self, addr: GuestPhysAddr) -> bool {
-        if !self.is_enabled() {
-            return false;
-        }
-
-        let (start, end) = self.config.get_mmio_range();
-        addr >= start && addr < end
     }
 
     /// Handle MMIO read operations

@@ -63,19 +63,6 @@ impl VirtioConfig {
         Self::new(base_ipa, device_index, VIRTIO_DEVICE_ID_CONSOLE, features, 2, VirtioDeviceType::Console) // Input and output queues
     }
 
-    /// Get the actual MMIO address for this device based on device_index
-    pub fn get_device_mmio_addr(&self) -> GuestPhysAddr {
-        let offset = self.device_index * VIRTIO_MMIO_DEVICE_SIZE;
-        self.base_addr + offset
-    }
-
-    /// Get the MMIO range for this device
-    pub fn get_mmio_range(&self) -> (GuestPhysAddr, GuestPhysAddr) {
-        let start_addr = self.get_device_mmio_addr();
-        let end_addr = start_addr + self.mmio_size;
-        (start_addr, end_addr)
-    }
-
     /// Check if device index is valid
     pub fn is_valid_device_index(&self) -> bool {
         self.device_index < VIRTIO_MAX_DEVICES

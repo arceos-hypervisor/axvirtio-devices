@@ -62,9 +62,6 @@ impl VirtioConsoleDevice {
             config.max_queue_size,
         ));
 
-        // Get the actual device MMIO address based on device_index
-        let base_ipa = config.get_device_mmio_addr();
-
         // Create backend
         let backend = create_default_backend(device_index)?;
 
@@ -73,7 +70,7 @@ impl VirtioConsoleDevice {
         let console_config = VirtioConsoleConfig::with_size(cols, rows);
 
         Ok(Self {
-            base_ipa,
+            base_ipa: GuestPhysAddr::from(base_ipa),
             length,
             config,
             console_config: Mutex::new(console_config),
@@ -94,16 +91,6 @@ impl VirtioConsoleDevice {
         self.config.is_valid_device_index()
     }
 
-    /// Check if an address is within this device's MMIO range
-    pub fn is_address_in_range(&self, addr: GuestPhysAddr) -> bool {
-        if !self.is_enabled() {
-            return false;
-        }
-
-        let (start, end) = self.config.get_mmio_range();
-        addr >= start && addr < end
-    }
-
     /// Handle MMIO read operations
     pub fn mmio_read(&self, addr: GuestPhysAddr, width: AccessWidth) -> AxResult<usize> {
         // Validate access and get offset
@@ -112,10 +99,6 @@ impl VirtioConsoleDevice {
                 Ok(offset) => offset,
                 Err(_) => return Ok(0),
             };
-
-        if !self.is_address_in_range(addr) {
-            return Ok(0);
-        }
 
         let value = match offset {
             VIRTIO_MMIO_MAGIC_VALUE => MMIO_MAGIC_VALUE,
@@ -195,10 +178,6 @@ impl VirtioConsoleDevice {
                 Ok(offset) => offset,
                 Err(_) => return Ok(()),
             };
-
-        if !self.is_address_in_range(addr) {
-            return Ok(());
-        }
 
         trace!(
             "Console device {}: MMIO write at offset 0x{:x} = 0x{:x}",

@@ -8,10 +8,11 @@ use super::traits::ConsoleBackend;
 use crate::constants::*;
 use std::format;
 use std::fs::{File, OpenOptions};
-use std::io::{Seek, SeekFrom, Read, Write};
+use std::io::{Read, Seek, SeekFrom, Write};
 
 /// Maximum output buffer size in bytes (64KB)
 const MAX_OUTPUT_BUFFER_SIZE: usize = 65536;
+const MAX_INPUT_CACHE_BUFFER_SIZE: usize = 65536;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u32)]
@@ -19,7 +20,7 @@ enum CmdType {
     AltF1,
     AltF2,
     AltF3,
-    None
+    None,
 }
 
 /// Standard I/O console backend
@@ -32,6 +33,8 @@ pub struct StdioConsoleBackend {
     input_buffer: Mutex<VecDeque<u8>>,
     /// Output buffer for caching written data
     output_buffer: Mutex<Vec<u8>>,
+    /// Input Cache for commands
+    input_cache: Mutex<VecDeque<CmdType>>,
     /// Statistics
     stats: Mutex<ConsoleStats>,
 }
@@ -39,7 +42,7 @@ pub struct StdioConsoleBackend {
 #[derive(Debug, Default)]
 struct ConsoleStats {
     bytes_written: u64,
-    bytes_read: u64
+    bytes_read: u64,
 }
 
 impl StdioConsoleBackend {
@@ -52,14 +55,13 @@ impl StdioConsoleBackend {
             .create(true)
             .truncate(true)
             .open(&file_path);
-        let _ = OpenOptions::new()
-            .read(true)
-            .open(&file_path);
+        let _ = OpenOptions::new().read(true).open(&file_path);
         Self {
             device_index,
             size: Mutex::new((VIRTIO_CONSOLE_DEFAULT_COLS, VIRTIO_CONSOLE_DEFAULT_ROWS)),
             input_buffer: Mutex::new(VecDeque::new()),
             output_buffer: Mutex::new(Vec::new()),
+            input_cache: Mutex::new(VecDeque::new()),
             stats: Mutex::new(ConsoleStats::default()),
         }
     }
@@ -83,6 +85,9 @@ impl StdioConsoleBackend {
     }
 
     pub fn stdin_read(&self, buf: &mut [u8]) -> usize {
+        if self.device_index != axvirtio_common::current_console() {
+            return 0; // Skip reading for current console
+        }
         let mut read_len = 0;
         while read_len < buf.len() {
             let len = super::pl011::read_bytes(buf);
@@ -95,6 +100,9 @@ impl StdioConsoleBackend {
     }
 
     pub fn stdout_write(&self, buf: &[u8]) -> usize {
+        if self.device_index != axvirtio_common::current_console() {
+            return buf.len();
+        }
         super::pl011::write_bytes(buf);
         buf.len()
     }
@@ -142,25 +150,41 @@ impl ConsoleBackend for StdioConsoleBackend {
         // Cache the data in output buffer with FIFO overflow handling
         {
             let mut output_buffer = self.output_buffer.lock();
-            
+
             // Check if we need to remove old data to make room
             if output_buffer.len() + data.len() > MAX_OUTPUT_BUFFER_SIZE {
                 let excess = output_buffer.len() + data.len() - MAX_OUTPUT_BUFFER_SIZE;
                 output_buffer.drain(..excess);
             }
-            
+
             // Add new data to the buffer
             output_buffer.extend_from_slice(data);
 
             // 检查最后 6 个字节
             if output_buffer.len() >= 6 {
                 let last_bytes = &output_buffer[output_buffer.len() - 6..];
-                if last_bytes == b"^[1;9P" { // Alt+F1
+                let should_truncate = if (last_bytes == b"^[1;3P" || last_bytes == b"^[1;9P") && 0 != axvirtio_common::current_console() {
+                    // Alt+F1
                     info!("Console {}: Detected Alt+F1", self.device_index);
-                } else if last_bytes == b"^[1;9Q" { // Alt+F2
+                    axvirtio_common::set_current(0);
+                    true
+                } else if (last_bytes == b"^[1;3Q" || last_bytes == b"^[1;9Q") && 1 != axvirtio_common::current_console() {
+                    // Alt+F2
                     info!("Console {}: Detected Alt+F2", self.device_index);
-                } else if last_bytes == b"^[1;9R" { // Alt+F3
+                    axvirtio_common::set_current(1);
+                    true
+                } else if last_bytes == b"^[1;3R" || last_bytes == b"^[1;9R" {
+                    // Alt+F3
                     info!("Console {}: Detected Alt+F3", self.device_index);
+                    true
+                } else {
+                    false
+                };
+                
+                if should_truncate {
+                    // 删除末尾的 6 个字节
+                    let new_len = output_buffer.len() - 6;
+                    output_buffer.truncate(new_len);
                 }
             }
         }
@@ -169,13 +193,6 @@ impl ConsoleBackend for StdioConsoleBackend {
         // For now, we just log the output
         if let Ok(text) = core::str::from_utf8(data) {
             self.stdout_write(text.as_bytes());
-        } else {
-            log::info!(
-                "Console {}: Binary data ({} bytes): {:?}",
-                self.device_index,
-                data.len(),
-                &data[..data.len().min(16)]
-            );
         }
 
         // Update statistics
@@ -188,6 +205,14 @@ impl ConsoleBackend for StdioConsoleBackend {
     }
 
     fn read(&self, buffer: &mut [u8]) -> VirtioResult<usize> {
+        if axvirtio_common::get_status() != 0 && self.device_index == axvirtio_common::current_console() {
+            error!("Console {}: Device ready for read", self.device_index);
+            axvirtio_common::set_status(0);
+
+            // clear screen
+            self.stdout_write(b"\x1b[2J\x1b[H");
+            self.stdout_write(self.output_buffer.lock().as_slice());
+        }
         let mut input_buffer = self.input_buffer.lock();
         let mut bytes_read = 0;
 

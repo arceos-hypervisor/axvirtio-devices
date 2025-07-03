@@ -12,9 +12,7 @@ use crate::block::config::VirtioBlockConfig;
 use crate::block::request::BlockRequestType;
 use crate::block::BlockRequest;
 use crate::constants::*;
-use axvirtio_common::{
-     MmioTransport, VirtioConfig, VirtioError, VirtioQueue, VirtioResult
-};
+use axvirtio_common::{MmioTransport, VirtioConfig, VirtioError, VirtioQueue, VirtioResult};
 
 /// VirtIO MMIO device state
 pub struct VirtioMmioDevice {
@@ -48,15 +46,12 @@ pub struct VirtioMmioDevice {
 
 impl VirtioMmioDevice {
     /// Create a new VirtIO MMIO device with device index
-    pub fn new(base_ipa:usize, device_index: usize, length: usize) -> VirtioResult<Self> {
+    pub fn new(base_ipa: usize, device_index: usize, length: usize) -> VirtioResult<Self> {
         let config = VirtioConfig::new_block_device(base_ipa, device_index);
         let mut queues = Vec::new();
 
         // Create default queue
         queues.push(VirtioQueue::new(0, config.max_queue_size));
-
-        // Get the actual device MMIO address based on device_index
-        let base_ipa = config.get_device_mmio_addr();
 
         // Create backend
         let backend = if let Ok(backend) = create_default_backend(device_index) {
@@ -66,7 +61,7 @@ impl VirtioMmioDevice {
         };
 
         Ok(Self {
-            base_ipa,
+            base_ipa: GuestPhysAddr::from(base_ipa),
             length,
             config,
             block_config: VirtioBlockConfig::default(),
@@ -85,16 +80,6 @@ impl VirtioMmioDevice {
     /// Check if device index is valid
     pub fn is_enabled(&self) -> bool {
         self.config.is_valid_device_index()
-    }
-
-    /// Check if an address is within this device's MMIO range
-    pub fn is_address_in_range(&self, addr: GuestPhysAddr) -> bool {
-        if !self.is_enabled() {
-            return false;
-        }
-
-        let (start, end) = self.config.get_mmio_range();
-        addr >= start && addr < end
     }
 
     /// Get device status
@@ -120,26 +105,11 @@ impl VirtioMmioDevice {
             return Ok(0);
         }
 
-        // Check if address is within the overall MMIO range (self.config.base_addr - self.config.base_addr + self.config.total_mmio_size)
-        let max_mmio = GuestPhysAddr::from(self.config.base_addr.add(self.config.total_mmio_size));
-        if addr < self.config.base_addr || addr >= max_mmio {
-            return Ok(0);
-        }
-
-        // Check if address is within this device's specific range based on device_index
-        let device_start =
-            self.config.base_addr + (self.config.device_index * self.config.mmio_size);
-        let device_end = device_start + self.config.mmio_size;
-        if addr < device_start || addr >= device_end {
-            // Return 0 for addresses outside this device's range
-            return Ok(0);
-        }
-
-        // Validate access width
-        MmioTransport::validate_access_width(width)?;
-
-        // Calculate offset from this device's base address
-        let offset = MmioTransport::calculate_offset(addr, device_start);
+        let offset =
+            match MmioTransport::validate_read_access(addr, width, self.base_ipa, self.length) {
+                Ok(offset) => offset,
+                Err(_) => return Ok(0),
+            };
 
         let value = match offset {
             VIRTIO_MMIO_MAGIC_VALUE => MMIO_MAGIC_VALUE,
@@ -212,26 +182,11 @@ impl VirtioMmioDevice {
             return Ok(());
         }
 
-        // Check if address is within the overall MMIO range (self.config.base_addr - self.config.base_addr + self.config.total_mmio_size)
-        let max_mmio = GuestPhysAddr::from(self.config.base_addr.add(self.config.total_mmio_size));
-        if addr < self.config.base_addr || addr >= max_mmio {
-            return Ok(());
-        }
-
-        // Check if address is within this device's specific range based on device_index
-        let device_start =
-            self.config.base_addr + (self.config.device_index * self.config.mmio_size);
-        let device_end = device_start + self.config.mmio_size;
-        if addr < device_start || addr >= device_end {
-            // Return 0 for addresses outside this device's range
-            return Ok(());
-        }
-
-        // Validate access width
-        MmioTransport::validate_access_width(width)?;
-
-        // Calculate offset from this device's base address
-        let offset = MmioTransport::calculate_offset(addr, device_start);
+        let offset =
+            match MmioTransport::validate_write_access(addr, width, self.base_ipa, self.length) {
+                Ok(offset) => offset,
+                Err(_) => return Ok(()),
+            };
         let val = val as u32;
 
         match offset {
@@ -419,8 +374,7 @@ impl VirtioMmioDevice {
                 Err(e) => {
                     error!(
                         "Failed to read available ring entry {}: {:?}",
-                        ring_index,
-                        e
+                        ring_index, e
                     );
                     current_avail = current_avail.wrapping_add(1);
                     continue;
@@ -514,7 +468,7 @@ impl VirtioMmioDevice {
             }
         };
 
-         trace!("Descriptor chain has {} data buffers", buffers.len());
+        trace!("Descriptor chain has {} data buffers", buffers.len());
 
         // Get status address
         let status_addr = match queue.get_status_addr(head_index) {
@@ -586,8 +540,6 @@ impl VirtioMmioDevice {
             error!("Invalid queue index: {}", queue.index);
         }
     }
-
-
 
     /// Trigger an interrupt to notify the driver
     fn trigger_interrupt(&self) {
