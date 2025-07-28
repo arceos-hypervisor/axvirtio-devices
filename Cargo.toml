@@ -4,8 +4,6 @@ resolver = "2"
 members = [
     "axvirtio-common",
     "axvirtio-blk",
-    "axvirtio-net",
-    "axvirtio-console",
 ]
 
 [workspace.package]
