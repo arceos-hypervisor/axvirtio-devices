@@ -5,19 +5,26 @@ use crate::constants::*;
 use axvirtio_common::{VirtioError, VirtioResult};
 
 #[cfg(feature = "file-backend")]
-use axfs::fops::{File, OpenOptions};
+use std::fs::{File, OpenOptions};
+#[cfg(feature = "file-backend")]
+use std::io::{Seek, SeekFrom, Read, Write};
+#[cfg(feature = "file-backend")]
+use spin::Mutex;
 
 /// File-based block device backend
 ///
 /// This backend stores data in a file on the host filesystem.
+/// Uses separate read and write file handles for better performance.
 #[cfg(feature = "file-backend")]
 pub struct FileBackend {
-    /// File path
-    file_path: String,
     /// Device capacity in sectors
     capacity: u64,
     /// Read-only flag
     read_only: bool,
+    /// Dedicated file handle for read operations
+    read_file: Mutex<Option<File>>,
+    /// Dedicated file handle for write operations (None for read-only devices)
+    write_file: Mutex<Option<File>>,
 }
 
 /// Placeholder FileBackend for when file-backend feature is disabled
@@ -41,21 +48,25 @@ impl FileBackend {
             return Err(VirtioError::InvalidConfig);
         }
 
-        // Try to create/open the file to validate it exists or can be created
-        let mut opts = OpenOptions::new();
-        if read_only {
-            opts.read(true);
+        // Create read file handle
+        let mut read_opts = OpenOptions::new();
+        read_opts.read(true);
+        let read_file = Some(read_opts.open(&file_path).map_err(|_| VirtioError::BackendError)?);
+
+        // Create write file handle if not read-only
+        let write_file = if read_only {
+            None
         } else {
-            opts.create(true);
-            opts.write(true);
-            opts.read(true);
-        }
-        let _file = File::open(&file_path, &opts).map_err(|_| VirtioError::BackendError)?;
+            let mut write_opts = OpenOptions::new();
+            write_opts.create(true).write(true).read(true);
+            Some(write_opts.open(&file_path).map_err(|_| VirtioError::BackendError)?)
+        };
 
         Ok(Self {
-            file_path,
             capacity: capacity_sectors,
             read_only,
+            read_file: Mutex::new(read_file),
+            write_file: Mutex::new(write_file),
         })
     }
 
@@ -90,18 +101,19 @@ impl BlockBackend for FileBackend {
     fn read(&self, sector: u64, buffer: &mut [u8]) -> VirtioResult<usize> {
         self.validate_access(sector, buffer.len())?;
 
-        // Open file for reading
-        let mut opts = OpenOptions::new();
-        opts.read(true);
-        let file = File::open(&self.file_path, &opts).map_err(|_| VirtioError::BackendError)?;
-
         // Calculate byte offset
         let offset = sector * SECTOR_SIZE_U64;
 
-        // Read data from file at offset
-        let bytes_read = file
-            .read_at(offset, buffer)
-            .map_err(|_| VirtioError::BackendError)?;
+        // Use the dedicated read file handle
+        let mut read_file_guard = self.read_file.lock();
+        let read_file = read_file_guard.as_mut().ok_or(VirtioError::BackendError)?;
+
+        // Seek to the offset and read data
+        if let Err(_) = read_file.seek(SeekFrom::Start(offset)) {
+            return Err(VirtioError::BackendError);
+        }
+
+        let bytes_read = read_file.read(buffer).map_err(|_| VirtioError::BackendError)?;
 
         Ok(bytes_read)
     }
@@ -113,28 +125,30 @@ impl BlockBackend for FileBackend {
 
         self.validate_access(sector, buffer.len())?;
 
-        // Open file for writing
-        let mut opts = OpenOptions::new();
-        opts.write(true);
-        let file = File::open(&self.file_path, &opts).map_err(|_| VirtioError::BackendError)?;
-
         // Calculate byte offset
         let offset = sector * SECTOR_SIZE_U64;
 
-        // Write data to file at offset
-        let bytes_written = file
-            .write_at(offset, buffer)
-            .map_err(|_| VirtioError::BackendError)?;
+        // Use the dedicated write file handle
+        let mut write_file_guard = self.write_file.lock();
+        let write_file = write_file_guard.as_mut().ok_or(VirtioError::BackendError)?;
+
+        // Seek to the offset and write data
+        if let Err(_) = write_file.seek(SeekFrom::Start(offset)) {
+            return Err(VirtioError::BackendError);
+        }
+
+        let bytes_written = write_file.write(buffer).map_err(|_| VirtioError::BackendError)?;
 
         Ok(bytes_written)
     }
 
     fn flush(&self) -> VirtioResult<()> {
-        // Open file and sync
-        let mut opts = OpenOptions::new();
-        opts.read(true);
-        let file = File::open(&self.file_path, &opts).map_err(|_| VirtioError::BackendError)?;
-        file.flush().map_err(|_| VirtioError::BackendError)?;
+        // If we have a write file handle, use it for flushing
+        let mut write_file_guard = self.write_file.lock();
+        if let Some(write_file) = write_file_guard.as_mut() {
+            write_file.flush().map_err(|_| VirtioError::BackendError)?;
+        }
+        // If no write file exists (read-only device), there's nothing to flush
         Ok(())
     }
 }

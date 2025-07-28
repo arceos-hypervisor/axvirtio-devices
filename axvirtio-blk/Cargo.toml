@@ -8,7 +8,7 @@ repository.workspace = true
 edition = "2021"
 
 [features]
-default = ["file-backend"]
+default = ["memory-backend"]
 file-backend = ["axfs"]
 memory-backend = []
 
@@ -23,3 +23,6 @@ log = "0.4"
 axdevice_base = { git = "https://github.com/arceos-hypervisor/axdevice_crates.git" }
 axhal = { git = "https://github.com/arceos-hypervisor/arceos.git", branch = "vmm" }
 axfs = { git = "https://github.com/arceos-hypervisor/arceos.git", branch = "vmm", optional = true }
+axstd = { git = "https://github.com/arceos-hypervisor/arceos.git", branch = "vmm", features = [
+    "fs",
+] }

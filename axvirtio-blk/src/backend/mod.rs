@@ -6,6 +6,7 @@ mod traits;
 
 use alloc::boxed::Box;
 use axvirtio_common::VirtioResult;
+ use crate::constants::DEFAULT_CAPACITY_SECTORS;
 
 pub use traits::BlockBackend;
 
@@ -20,13 +21,13 @@ pub fn create_default_backend(device_index: usize) -> VirtioResult<Box<dyn Block
     #[cfg(feature = "file-backend")]
     {
         let disk_path = format!("/guest/vm_{}.img", device_index);
-        let backend = FileBackend::new(disk_path, 2 * 1024, false)?; // 1MB default
+        let backend = FileBackend::new(disk_path, DEFAULT_CAPACITY_SECTORS, false)?; // 10MB default
         Ok(Box::new(backend))
     }
 
     #[cfg(all(feature = "memory-backend", not(feature = "file-backend")))]
     {
-        let backend = MemoryBackend::new(1024 * 1024, false, device_index)?; // 512MB default
+        let backend = MemoryBackend::new(DEFAULT_CAPACITY_SECTORS, false, device_index)?; // 512MB default
         Ok(Box::new(backend))
     }
 

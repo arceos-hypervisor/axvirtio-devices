@@ -5,14 +5,42 @@ extern crate alloc;
 pub mod config;
 pub mod constants;
 pub mod error;
+pub mod memory;
 pub mod mmio;
 pub mod queue;
+mod device_type;
 
+use axaddrspace::GuestPhysAddr;
 // Re-export commonly used types
 pub use config::VirtioConfig;
 pub use error::{VirtioError, VirtioResult};
+use memory_addr::PhysAddr;
+pub use memory::GuestMemoryAccess;
 pub use mmio::transport::MmioTransport;
 pub use queue::VirtioQueue;
+pub use device_type::VirtioDeviceType;
 
 // Re-export commonly used constants
 pub use constants::*;
+
+/// Legacy function for backward compatibility
+/// Use GuestMemoryAccess for new code
+pub fn translate_to_phys(addr: GuestPhysAddr) -> Option<PhysAddr> {
+    axvisor_api::guest_memory::translate_to_phys(axvisor_api::vmm::current_vm_id(), axvisor_api::vmm::current_vcpu_id(), addr)
+}
+
+pub fn set_current(vm_num: usize) {
+    axvisor_api::set_current(vm_num);
+}
+
+pub fn current_console() -> usize {
+    axvisor_api::current_console()
+}
+
+pub fn get_status() -> usize {
+    axvisor_api::get_status()
+}
+
+pub fn set_status(status: usize) {
+    axvisor_api::set_status(status);
+}

@@ -2,7 +2,8 @@ use alloc::boxed::Box;
 use alloc::vec::Vec;
 use axaddrspace::{device::AccessWidth, GuestPhysAddr};
 use axerrno::AxResult;
-use memory_addr::MemoryAddr;
+
+use log::{error, info, trace, warn};
 use spin::Mutex;
 
 use crate::backend::{create_default_backend, BlockBackend};
@@ -44,29 +45,29 @@ pub struct VirtioMmioDevice {
 
 impl VirtioMmioDevice {
     /// Create a new VirtIO MMIO device with device index
-    pub fn new(device_index: usize) -> VirtioResult<Self> {
-        let config = VirtioConfig::new_block_device(device_index);
+    pub fn new(base_ipa: usize, device_index: usize, length: usize) -> VirtioResult<Self> {
+        let config = VirtioConfig::new_block_device(base_ipa, device_index);
         let mut queues = Vec::new();
 
         // Create default queue
         queues.push(VirtioQueue::new(0, config.max_queue_size));
 
-        // Get the actual device MMIO address based on device_index
-        let base_ipa = config.get_device_mmio_addr();
-        let length = config.total_mmio_size;
-
         // Create backend
-        let backend = create_default_backend(device_index)?;
+        let backend = if let Ok(backend) = create_default_backend(device_index) {
+            backend
+        } else {
+            panic!("Create backend error!");
+        };
 
         Ok(Self {
-            base_ipa,
+            base_ipa: GuestPhysAddr::from(base_ipa),
             length,
             config,
             block_config: VirtioBlockConfig::default(),
             status: Mutex::new(0),
-            driver_features: Mutex::new(0),
+            driver_features: Mutex::new(VIRTIO_BLK_FEATURES.try_into().unwrap()),
             device_features_sel: Mutex::new(0),
-            driver_features_sel: Mutex::new(VIRTIO_BLK_FEATURES.try_into().unwrap()),
+            driver_features_sel: Mutex::new(0),
             queue_sel: Mutex::new(0),
             queues: Mutex::new(queues),
             interrupt_status: Mutex::new(0),
@@ -78,16 +79,6 @@ impl VirtioMmioDevice {
     /// Check if device index is valid
     pub fn is_enabled(&self) -> bool {
         self.config.is_valid_device_index()
-    }
-
-    /// Check if an address is within this device's MMIO range
-    pub fn is_address_in_range(&self, addr: GuestPhysAddr) -> bool {
-        if !self.is_enabled() {
-            return false;
-        }
-
-        let (start, end) = self.config.get_mmio_range();
-        addr >= start && addr < end
     }
 
     /// Get device status
@@ -113,26 +104,11 @@ impl VirtioMmioDevice {
             return Ok(0);
         }
 
-        // Check if address is within the overall MMIO range (self.config.base_addr - self.config.base_addr + self.config.total_mmio_size)
-        let max_mmio = GuestPhysAddr::from(self.config.base_addr.add(self.config.total_mmio_size));
-        if addr < self.config.base_addr || addr >= max_mmio {
-            return Ok(0);
-        }
-
-        // Check if address is within this device's specific range based on device_index
-        let device_start =
-            self.config.base_addr + (self.config.device_index * self.config.mmio_size);
-        let device_end = device_start + self.config.mmio_size;
-        if addr < device_start || addr >= device_end {
-            // Return 0 for addresses outside this device's range
-            return Ok(0);
-        }
-
-        // Validate access width
-        MmioTransport::validate_access_width(width)?;
-
-        // Calculate offset from this device's base address
-        let offset = MmioTransport::calculate_offset(addr, device_start);
+        let offset =
+            match MmioTransport::validate_read_access(addr, width, self.base_ipa, self.length) {
+                Ok(offset) => offset,
+                Err(_) => return Ok(0),
+            };
 
         let value = match offset {
             VIRTIO_MMIO_MAGIC_VALUE => MMIO_MAGIC_VALUE,
@@ -205,26 +181,11 @@ impl VirtioMmioDevice {
             return Ok(());
         }
 
-        // Check if address is within the overall MMIO range
-        let base_mmio = GuestPhysAddr::from(VIRTIO_MMIO_BASE);
-        let max_mmio = GuestPhysAddr::from(VIRTIO_MMIO_BASE + VIRTIO_MMIO_TOTAL_SIZE);
-        if addr < base_mmio || addr >= max_mmio {
-            return Ok(());
-        }
-
-        // Check if address is within this device's specific range based on device_index
-        let device_start = base_mmio + (self.config.device_index * VIRTIO_MMIO_DEVICE_SIZE);
-        let device_end = device_start + VIRTIO_MMIO_DEVICE_SIZE;
-        if addr < device_start || addr >= device_end {
-            // Ignore writes to addresses outside this device's range
-            return Ok(());
-        }
-
-        // Validate access width
-        MmioTransport::validate_access_width(width)?;
-
-        // Calculate offset from this device's base address
-        let offset = MmioTransport::calculate_offset(addr, device_start);
+        let offset =
+            match MmioTransport::validate_write_access(addr, width, self.base_ipa, self.length) {
+                Ok(offset) => offset,
+                Err(_) => return Ok(()),
+            };
         let val = val as u32;
 
         match offset {
@@ -342,7 +303,7 @@ impl VirtioMmioDevice {
 
     /// Handle queue notification
     fn handle_queue_notify(&self, queue_index: u16) {
-        log::debug!(
+        trace!(
             "Queue {} notified for device {}",
             queue_index,
             self.config.device_index
@@ -350,35 +311,37 @@ impl VirtioMmioDevice {
 
         // Check if device is ready
         if !self.is_device_ready() {
-            log::warn!("Device not ready, ignoring queue notification");
+            warn!("Device not ready, ignoring queue notification");
             return;
         }
 
-        // Get the queue
-        let queues = self.queues.lock();
-        let queue = match queues.get(queue_index as usize) {
-            Some(q) if q.ready => q,
-            Some(_) => {
-                log::warn!("Queue {} not ready", queue_index);
-                return;
+        // Get a copy of the queue to avoid holding the lock during processing
+        let queue_copy = {
+            let queues = self.queues.lock();
+            match queues.get(queue_index as usize) {
+                Some(q) if q.ready => q.clone(),
+                Some(_) => {
+                    warn!("Queue {} not ready", queue_index);
+                    return;
+                }
+                None => {
+                    warn!("Invalid queue index: {}", queue_index);
+                    return;
+                }
             }
-            None => {
-                log::warn!("Invalid queue index: {}", queue_index);
-                return;
-            }
-        };
+        }; // Lock is released here
 
         // Check if queue addresses are set
-        if queue.desc_table_addr.as_usize() == 0
-            || queue.avail_ring_addr.as_usize() == 0
-            || queue.used_ring_addr.as_usize() == 0
+        if queue_copy.desc_table_addr.as_usize() == 0
+            || queue_copy.avail_ring_addr.as_usize() == 0
+            || queue_copy.used_ring_addr.as_usize() == 0
         {
-            log::warn!("Queue {} addresses not properly set", queue_index);
+            warn!("Queue {} addresses not properly set", queue_index);
             return;
         }
 
         // Process available requests in the queue
-        self.process_queue_requests(queue);
+        self.process_queue_requests(&queue_copy);
     }
 
     /// Process requests in the queue
@@ -387,59 +350,72 @@ impl VirtioMmioDevice {
         let avail_idx = match queue.read_avail_idx() {
             Ok(idx) => idx,
             Err(e) => {
-                log::error!("Failed to read available index: {:?}", e);
+                error!("Failed to read available index: {:?}", e);
                 return;
             }
         };
 
-        log::debug!(
+        trace!(
             "Available index: {}, next_avail: {}",
             avail_idx,
-            queue.next_avail
+            queue.get_last_avail_idx()
         );
 
         // Process new available descriptors
-        let mut current_avail = queue.next_avail;
+        let mut current_avail = queue.get_last_avail_idx();
+        let mut processed_requests = Vec::new();
+
         while current_avail != avail_idx {
             // Get descriptor index from available ring
             let ring_index = current_avail % queue.size;
             let desc_index = match queue.read_avail_entry(ring_index) {
                 Ok(idx) => idx,
                 Err(e) => {
-                    log::error!(
+                    error!(
                         "Failed to read available ring entry {}: {:?}",
-                        ring_index,
-                        e
+                        ring_index, e
                     );
                     current_avail = current_avail.wrapping_add(1);
                     continue;
                 }
             };
 
-            log::debug!(
+            trace!(
                 "Processing descriptor chain starting at index {}",
                 desc_index
             );
 
             // Process the descriptor chain
-            if let Err(e) = self.process_descriptor_chain(queue, desc_index) {
-                log::error!("Failed to process descriptor chain {}: {:?}", desc_index, e);
-                // Write error status to used ring
-                self.add_used_buffer(queue, desc_index, 0, 1); // Status = 1 (error)
+            match self.process_descriptor_chain(queue, desc_index) {
+                Ok(()) => {
+                    // Request processed successfully, will be handled in process_descriptor_chain
+                }
+                Err(e) => {
+                    error!("Failed to process descriptor chain {}: {:?}", desc_index, e);
+                    // Store error request for later processing
+                    processed_requests.push((desc_index, 0, 1)); // Status = 1 (error)
+                }
             }
 
             current_avail = current_avail.wrapping_add(1);
         }
 
-        // Update next_avail in the queue (this should be done atomically in a real implementation)
-        if current_avail != queue.next_avail {
-            let processed_count = current_avail.wrapping_sub(queue.next_avail);
-            log::debug!("Processed {} requests", processed_count);
+        // Update next_avail in the queue and handle any error requests
+        if current_avail != queue.get_last_avail_idx() || !processed_requests.is_empty() {
+            let processed_count = current_avail.wrapping_sub(queue.get_last_avail_idx());
+            trace!("Processed {} requests", processed_count);
 
-            // Update the queue's next_avail index
+            // Update the queue's next_avail index and handle error requests
             let mut queues = self.queues.lock();
             if let Some(queue_mut) = queues.get_mut(queue.index as usize) {
                 queue_mut.update_last_avail_idx(current_avail);
+
+                // Handle any error requests
+                for (desc_index, len, _status) in processed_requests {
+                    if let Err(e) = queue_mut.add_used(desc_index, len) {
+                        error!("Failed to add used buffer for error request: {:?}", e);
+                    }
+                }
             }
         }
     }
@@ -464,46 +440,48 @@ impl VirtioMmioDevice {
         match queue.validate_virtio_block_chain(head_index, MIN_DESCRIPTOR_CHAIN_LENGTH) {
             Ok(true) => {}
             Ok(false) => {
-                log::error!("Invalid VirtIO block descriptor chain");
+                error!("Invalid VirtIO block descriptor chain");
                 return Err(VirtioError::InvalidQueue.into());
             }
             Err(e) => {
-                log::error!("Failed to validate descriptor chain: {:?}", e);
+                error!("Failed to validate descriptor chain: {:?}", e);
                 return Err(VirtioError::InvalidQueue.into());
             }
         }
 
         // Parse the request header
-        let (request_type, sector) = match queue.parse_virtio_block_header(head_index) {
+        let header = match queue.parse_virtio_block_header(head_index) {
             Ok(header) => header,
             Err(e) => {
-                log::error!("Failed to parse VirtIO block header: {:?}", e);
+                error!("Failed to parse VirtIO block header: {:?}", e);
                 return Err(VirtioError::InvalidQueue.into());
             }
         };
 
         // Get data buffers
-        let buffers = match queue.get_data_buffers(head_index) {
+        let buffers = match queue.get_data_buffers(head_index, self.config.device_type) {
             Ok(buffers) => buffers,
             Err(e) => {
-                log::error!("Failed to get data buffers: {:?}", e);
+                error!("Failed to get data buffers: {:?}", e);
                 return Err(VirtioError::InvalidQueue.into());
             }
         };
+
+        trace!("Descriptor chain has {} data buffers", buffers.len());
 
         // Get status address
         let status_addr = match queue.get_status_addr(head_index) {
             Ok(addr) => addr,
             Err(e) => {
-                log::error!("Failed to get status address: {:?}", e);
+                error!("Failed to get status address: {:?}", e);
                 return Err(VirtioError::InvalidQueue.into());
             }
         };
 
         // Create request object
         let request = BlockRequest::new_virtio(
-            BlockRequestType::from(request_type),
-            sector,
+            BlockRequestType::from(header.request_type),
+            header.sector,
             buffers,
             status_addr,
         );
@@ -521,7 +499,7 @@ impl VirtioMmioDevice {
 
     /// Add a used buffer to the used ring
     fn add_used_buffer(&self, queue: &VirtioQueue, desc_index: u16, len: u32, status: u8) {
-        log::debug!(
+        trace!(
             "Completing request: desc_index={}, len={}, status={}",
             desc_index,
             len,
@@ -530,14 +508,17 @@ impl VirtioMmioDevice {
 
         // Write the status byte to the status buffer first
         // This is typically the last descriptor in the chain
-        self.write_status_byte(queue, status);
+        if let Err(e) = queue.write_status_byte(desc_index, status) {
+            error!("Failed to write status byte: {:?}", e);
+            return;
+        }
 
         // Get a mutable reference to the queue to update the used ring
         let mut queues = self.queues.lock();
         if let Some(queue_mut) = queues.get_mut(queue.index as usize) {
             // Add the used buffer to the used ring
             if let Err(e) = queue_mut.add_used(desc_index, len) {
-                log::error!("Failed to add used buffer: {:?}", e);
+                error!("Failed to add used buffer: {:?}", e);
                 return;
             }
 
@@ -545,24 +526,18 @@ impl VirtioMmioDevice {
             match queue_mut.should_notify() {
                 Ok(should_notify) => {
                     if should_notify {
+                        // Release the lock before triggering interrupt to avoid potential deadlock
+                        drop(queues);
                         self.trigger_interrupt();
                     }
                 }
                 Err(e) => {
-                    log::error!("Failed to check notification requirement: {:?}", e);
+                    error!("Failed to check notification requirement: {:?}", e);
                 }
             }
         } else {
-            log::error!("Invalid queue index: {}", queue.index);
+            error!("Invalid queue index: {}", queue.index);
         }
-    }
-
-    /// Write status byte to the status buffer
-    fn write_status_byte(&self, _queue: &VirtioQueue, status: u8) {
-        // In a real implementation, this would write the status byte to the
-        // appropriate location in guest memory (typically the last descriptor)
-        // For now, we just log the status
-        log::debug!("Writing status byte: {}", status);
     }
 
     /// Trigger an interrupt to notify the driver
@@ -571,7 +546,7 @@ impl VirtioMmioDevice {
         let mut interrupt_status = self.interrupt_status.lock();
         *interrupt_status |= VIRTIO_MMIO_INT_VRING;
 
-        log::debug!("Triggered interrupt for used buffer notification");
+        trace!("Triggered interrupt for used buffer notification");
 
         // In a real implementation, this would trigger an actual interrupt
         // to the guest VM through the interrupt controller
@@ -593,11 +568,11 @@ impl VirtioMmioDevice {
 
         // Handle status transitions
         if (status & VIRTIO_STATUS_FAILED) != 0 {
-            log::warn!("VirtIO device failed");
+            warn!("VirtIO device failed");
         }
 
         if (status & VIRTIO_STATUS_DRIVER_OK) != 0 {
-            log::info!("VirtIO device driver OK");
+            info!("VirtIO device driver OK");
         }
     }
 
@@ -620,8 +595,8 @@ impl VirtioMmioDevice {
     /// Get the selected queue
     pub fn get_selected_queue(&self) -> Option<u16> {
         let queue_sel = *self.queue_sel.lock();
-        let queues = self.queues.lock();
-        if (queue_sel as usize) < queues.len() {
+        let queue_count = self.queues.lock().len();
+        if (queue_sel as usize) < queue_count {
             Some(queue_sel)
         } else {
             None

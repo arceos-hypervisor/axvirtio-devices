@@ -29,7 +29,13 @@ impl MemoryBackend {
         }
 
         let capacity_bytes = capacity_sectors * SECTOR_SIZE_U64;
-        let data = vec![0u8; capacity_bytes as usize];
+        let mut data = vec![0u8; capacity_bytes as usize];
+
+        // 写一些 fat32 的初始扇区的内容
+        if capacity_sectors >= 34 {
+            let boot_sector = include_bytes!("../../imgs/ramdisk.img");
+            data[..boot_sector.len()].copy_from_slice(boot_sector);
+        }
 
         Ok(Self {
             data: Mutex::new(data),

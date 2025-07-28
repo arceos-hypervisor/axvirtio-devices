@@ -79,9 +79,6 @@ pub const VIRTIO_BLK_S_OK: u8 = 0;
 /// Block request status: I/O error
 pub const VIRTIO_BLK_S_IOERR: u8 = 1;
 
-/// Block request status: Unsupported operation
-pub const VIRTIO_BLK_S_UNSUPP: u8 = 2;
-
 // ============================================================================
 // Block Device Size and Capacity Constants
 // ============================================================================
@@ -93,7 +90,7 @@ pub const SECTOR_SIZE: u32 = 512;
 pub const SECTOR_SIZE_U64: u64 = 512;
 
 /// Default capacity in sectors (1MB = 2048 sectors)
-pub const DEFAULT_CAPACITY_SECTORS: u64 = 2048;
+pub const DEFAULT_CAPACITY_SECTORS: u64 = 64 * 2048;
 
 // ============================================================================
 // Block Device Configuration Defaults

@@ -3,6 +3,8 @@
 #[macro_use]
 extern crate alloc;
 
+extern crate axstd as std;
+
 mod backend;
 mod block;
 mod constants;

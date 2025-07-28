@@ -1,5 +1,6 @@
 use crate::constants::*;
 use crate::error::{VirtioError, VirtioResult};
+use crate::memory::{read_guest_obj, write_guest_obj};
 use axaddrspace::GuestPhysAddr;
 
 /// VirtIO available ring structure
@@ -111,10 +112,7 @@ impl AvailableRing {
             return Err(VirtioError::QueueNotReady);
         }
 
-        unsafe {
-            let header_ptr = self.base_addr.as_usize() as *const VirtqAvail;
-            Ok(core::ptr::read_volatile(header_ptr))
-        }
+        read_guest_obj(self.base_addr)
     }
 
     /// Write the available ring header
@@ -123,12 +121,7 @@ impl AvailableRing {
             return Err(VirtioError::QueueNotReady);
         }
 
-        unsafe {
-            let header_ptr = self.base_addr.as_usize() as *mut VirtqAvail;
-            core::ptr::write_volatile(header_ptr, *header);
-        }
-
-        Ok(())
+        write_guest_obj(self.base_addr, *header)
     }
 
     /// Read the current available index from guest memory
@@ -139,10 +132,7 @@ impl AvailableRing {
 
         // Read the idx field from the header (offset 2 bytes for flags)
         let idx_addr = self.base_addr + 2;
-        unsafe {
-            let idx_ptr = idx_addr.as_usize() as *const u16;
-            Ok(core::ptr::read_volatile(idx_ptr))
-        }
+        read_guest_obj(idx_addr)
     }
 
     /// Get the available index for external access
@@ -160,10 +150,7 @@ impl AvailableRing {
             .ring_entry_addr(ring_index % self.size)
             .ok_or(VirtioError::InvalidQueue)?;
 
-        unsafe {
-            let entry_ptr = entry_addr.as_usize() as *const u16;
-            Ok(core::ptr::read_volatile(entry_ptr))
-        }
+        read_guest_obj(entry_addr)
     }
 
     /// Write a descriptor index to the available ring
@@ -176,10 +163,7 @@ impl AvailableRing {
             .ring_entry_addr(ring_index % self.size)
             .ok_or(VirtioError::InvalidQueue)?;
 
-        unsafe {
-            let entry_ptr = entry_addr.as_usize() as *mut u16;
-            core::ptr::write_volatile(entry_ptr, desc_index);
-        }
+        write_guest_obj(entry_addr, desc_index)?;
 
         Ok(())
     }
@@ -211,10 +195,7 @@ impl AvailableRing {
         }
 
         let event_addr = self.used_event_addr();
-        unsafe {
-            let event_ptr = event_addr.as_usize() as *const u16;
-            Ok(core::ptr::read_volatile(event_ptr))
-        }
+        read_guest_obj(event_addr)
     }
 
     /// Write the used event field (for event_idx feature)
@@ -224,11 +205,6 @@ impl AvailableRing {
         }
 
         let event_addr = self.used_event_addr();
-        unsafe {
-            let event_ptr = event_addr.as_usize() as *mut u16;
-            core::ptr::write_volatile(event_ptr, event);
-        }
-
-        Ok(())
+        write_guest_obj(event_addr, event)
     }
 }
