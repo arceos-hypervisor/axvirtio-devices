@@ -16,7 +16,5 @@ repository = ""
 [workspace.dependencies]
 axvirtio-common = { path = "axvirtio-common" }
 axvirtio-blk = { path = "axvirtio-blk" }
-axvirtio-net = { path = "axvirtio-net" }
-axvirtio-console = { path = "axvirtio-console" }
 
 axaddrspace = { git = "https://github.com/arceos-hypervisor/axaddrspace.git" }
