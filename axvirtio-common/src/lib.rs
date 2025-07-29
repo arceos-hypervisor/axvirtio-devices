@@ -27,7 +27,7 @@ pub mod queue;
 pub use config::VirtioConfig;
 pub use device_type::VirtioDeviceType;
 pub use error::{VirtioError, VirtioResult};
-pub use memory::GuestMemoryAccess;
+pub use memory::{AddressTranslator, GuestMemoryAccess};
 pub use mmio::MmioTransport;
 pub use queue::VirtioQueue;
 

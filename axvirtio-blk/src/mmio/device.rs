@@ -53,7 +53,7 @@ impl<B: BlockBackend, T: AddressTranslator + Clone> VirtioMmioDevice<B, T> {
     /// * `base_ipa` - Base IPA address for the device
     /// * `length` - MMIO region length
     /// * `backend` - Block backend implementation
-    /// * `memory` - Guest memory accessor with address translation
+    /// * `transtor` - Guest memory accessor with address translation
     pub fn new(base_ipa: usize, length: usize, backend: B, transtor: T) -> VirtioResult<Self> {
         let config = VirtioConfig::new_block_device(base_ipa);
         let mut queues = Vec::new();

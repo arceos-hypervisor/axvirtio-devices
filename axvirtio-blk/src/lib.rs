@@ -14,17 +14,37 @@
 //! ## Usage
 //!
 //! ```rust,no_run
-//! use axvirtio_blk::{VirtioMmioDevice, BlockBackend};
+//! use axvirtio_blk::{VirtioMmioDevice, BlockBackend, VirtioResult};
+//! use axvirtio_common::AddressTranslator;
+//! use axaddrspace::GuestPhysAddr;
+//! use memory_addr::PhysAddr;
 //!
 //! // Implement your block backend
 //! struct MyBlockBackend;
 //! impl BlockBackend for MyBlockBackend {
-//!     // ... implementation
+//!     fn read(&self, _sector: u64, _buffer: &mut [u8]) -> VirtioResult<usize> {
+//!         Ok(0)
+//!     }
+//!     fn write(&self, _sector: u64, _buffer: &[u8]) -> VirtioResult<usize> {
+//!         Ok(0)
+//!     }
+//!     fn flush(&self) -> VirtioResult<()> {
+//!         Ok(())
+//!     }
+//! }
+//!
+//! #[derive(Clone)]
+//! struct MyTranslator;
+//! impl AddressTranslator for MyTranslator {
+//!     fn translate_guest_to_host(&self, guest_addr: GuestPhysAddr) -> Option<PhysAddr> {
+//!         None
+//!     }
 //! }
 //!
 //! // Create and use the VirtIO block device
 //! let backend = MyBlockBackend;
-//! let device = VirtioMmioDevice::new(0x0a000000, 0x200, backend, memory_accessor)?;
+//! let translator = MyTranslator;
+//! let device = VirtioMmioDevice::new(0x0a000000, 0x200, backend, translator);
 //! ```
 
 #![no_std]
