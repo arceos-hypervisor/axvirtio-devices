@@ -36,12 +36,13 @@ pub trait GuestMemoryAccess {
 pub struct DefaultGuestMemoryAccess;
 
 impl GuestMemoryAccess for DefaultGuestMemoryAccess {
-    fn translate_guest_to_host(&self, guest_addr: GuestPhysAddr) -> Option<PhysAddr> {
-        axvisor_api::guest_memory::translate_to_phys(
-            axvisor_api::vmm::current_vm_id(),
-            axvisor_api::vmm::current_vcpu_id(),
-            guest_addr
-        )
+    fn translate_guest_to_host(&self, _guest_addr: GuestPhysAddr) -> Option<PhysAddr> {
+        // axvisor_api::guest_memory::translate_to_phys(
+        //     axvisor_api::vmm::current_vm_id(),
+        //     axvisor_api::vmm::current_vcpu_id(),
+        //     guest_addr
+        // )
+        None
     }
     
     fn read_obj<T: Copy>(&self, guest_addr: GuestPhysAddr) -> VirtioResult<T> {
