@@ -1,6 +1,6 @@
 use crate::constants::*;
 use crate::error::{VirtioError, VirtioResult};
-use crate::memory::GuestMemoryAccess;
+use crate::memory::{AddressTranslator, GuestMemoryAccess, GuestMemoryAccessor};
 use axaddrspace::GuestPhysAddr;
 
 /// VirtIO used ring element
@@ -22,7 +22,7 @@ impl VirtqUsedElem {
 
 /// VirtIO used ring structure
 #[repr(C)]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct VirtqUsed {
     /// Flags
     pub flags: u16,
@@ -54,7 +54,7 @@ impl VirtqUsed {
 
 /// Used ring management
 #[derive(Debug, Clone)]
-pub struct UsedRing<M: GuestMemoryAccess> {
+pub struct UsedRing<T: AddressTranslator + Clone> {
     /// Base address of the used ring
     pub base_addr: GuestPhysAddr,
     /// Queue size
@@ -62,12 +62,12 @@ pub struct UsedRing<M: GuestMemoryAccess> {
     /// Current used index
     pub used_idx: u16,
     /// Guest memory accessor
-    memory: M,
+    memory: GuestMemoryAccessor<T>,
 }
 
-impl<M: GuestMemoryAccess> UsedRing<M> {
+impl<T: AddressTranslator + Clone> UsedRing<T> {
     /// Create a new used ring
-    pub fn new(base_addr: GuestPhysAddr, size: u16, memory: M) -> Self {
+    pub fn new(base_addr: GuestPhysAddr, size: u16, memory: GuestMemoryAccessor<T>) -> Self {
         Self {
             base_addr,
             size,

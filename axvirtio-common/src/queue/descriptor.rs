@@ -1,5 +1,5 @@
 use crate::error::{VirtioError, VirtioResult};
-use crate::memory::GuestMemoryAccess;
+use crate::memory::{AddressTranslator, GuestMemoryAccess, GuestMemoryAccessor};
 use crate::{constants::*, VirtioDeviceType};
 use alloc::vec::Vec;
 use axaddrspace::GuestPhysAddr;
@@ -89,18 +89,18 @@ impl VirtqDesc {
 
 /// Descriptor table management
 #[derive(Debug, Clone)]
-pub struct DescriptorTable<M: GuestMemoryAccess> {
+pub struct DescriptorTable<T: AddressTranslator + Clone> {
     /// Base address of the descriptor table
     pub base_addr: GuestPhysAddr,
     /// Number of descriptors
     pub size: u16,
     /// Guest memory accessor
-    memory: M,
+    memory: GuestMemoryAccessor<T>,
 }
 
-impl<M: GuestMemoryAccess> DescriptorTable<M> {
+impl<T: AddressTranslator + Clone> DescriptorTable<T> {
     /// Create a new descriptor table
-    pub fn new(base_addr: GuestPhysAddr, size: u16, memory: M) -> Self {
+    pub fn new(base_addr: GuestPhysAddr, size: u16, memory: GuestMemoryAccessor<T>) -> Self {
         Self {
             base_addr,
             size,

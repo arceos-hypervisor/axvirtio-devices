@@ -9,6 +9,7 @@ pub use used::{UsedRing, VirtqUsed, VirtqUsedElem};
 
 use crate::{
     error::{VirtioError, VirtioResult},
+    memory::{AddressTranslator, GuestMemoryAccessor},
     GuestMemoryAccess, VirtioDeviceType,
 };
 use alloc::vec::Vec;
@@ -48,19 +49,19 @@ impl VirtioBlockHeader {
 
 /// VirtIO queue implementation
 #[derive(Debug, Clone)]
-pub struct VirtioQueue<M: GuestMemoryAccess> {
+pub struct VirtioQueue<T: AddressTranslator + Clone> {
     /// Queue index
     pub index: u16,
     /// Queue size
     pub size: u16,
     /// Descriptor table
-    desc_table: Option<DescriptorTable<M>>,
+    desc_table: Option<DescriptorTable<T>>,
     /// Available ring
-    avail_ring: Option<AvailableRing<M>>,
+    avail_ring: Option<AvailableRing<T>>,
     /// Used ring
-    used_ring: Option<UsedRing<M>>,
+    used_ring: Option<UsedRing<T>>,
     /// Guest memory accessor
-    memory: M,
+    memory: GuestMemoryAccessor<T>,
     /// Maximum queue size
     pub max_size: u16,
     /// Queue ready flag
@@ -79,9 +80,9 @@ pub struct VirtioQueue<M: GuestMemoryAccess> {
     pub event_idx_enabled: bool,
 }
 
-impl<M: GuestMemoryAccess + Clone> VirtioQueue<M> {
+impl<T: AddressTranslator + Clone> VirtioQueue<T> {
     /// Create a new VirtIO queue
-    pub fn new(index: u16, size: u16, memory: M) -> Self {
+    pub fn new(index: u16, size: u16, memory: GuestMemoryAccessor<T>) -> Self {
         Self {
             index,
             size,
@@ -201,22 +202,22 @@ impl<M: GuestMemoryAccess + Clone> VirtioQueue<M> {
     }
 
     /// Get the used ring reference
-    pub fn get_used_ring(&self) -> Option<&UsedRing<M>> {
+    pub fn get_used_ring(&self) -> Option<&UsedRing<T>> {
         self.used_ring.as_ref()
     }
 
     /// Get the used ring mutable reference
-    pub fn get_used_ring_mut(&mut self) -> Option<&mut UsedRing<M>> {
+    pub fn get_used_ring_mut(&mut self) -> Option<&mut UsedRing<T>> {
         self.used_ring.as_mut()
     }
 
     /// Get the available ring reference
-    pub fn get_avail_ring(&self) -> Option<&AvailableRing<M>> {
+    pub fn get_avail_ring(&self) -> Option<&AvailableRing<T>> {
         self.avail_ring.as_ref()
     }
 
     /// Get the descriptor table reference
-    pub fn get_desc_table(&self) -> Option<&DescriptorTable<M>> {
+    pub fn get_desc_table(&self) -> Option<&DescriptorTable<T>> {
         self.desc_table.as_ref()
     }
 

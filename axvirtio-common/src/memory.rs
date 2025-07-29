@@ -39,6 +39,7 @@ pub trait GuestMemoryAccess {
 }
 
 /// Guest memory access with injected translator
+#[derive(Debug, Clone)]
 pub struct GuestMemoryAccessor<T> {
     translator: T,
 }

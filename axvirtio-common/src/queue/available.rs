@@ -1,10 +1,11 @@
 use crate::error::{VirtioError, VirtioResult};
+use crate::memory::{AddressTranslator, GuestMemoryAccessor};
 use crate::{constants::*, GuestMemoryAccess};
 use axaddrspace::GuestPhysAddr;
 
 /// VirtIO available ring structure
 #[repr(C)]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct VirtqAvail {
     /// Flags
     pub flags: u16,
@@ -35,7 +36,7 @@ impl VirtqAvail {
 
 /// Available ring management
 #[derive(Debug, Clone)]
-pub struct AvailableRing<M: GuestMemoryAccess> {
+pub struct AvailableRing<T: AddressTranslator + Clone> {
     /// Base address of the available ring
     pub base_addr: GuestPhysAddr,
     /// Queue size
@@ -43,12 +44,12 @@ pub struct AvailableRing<M: GuestMemoryAccess> {
     /// Last seen available index
     pub last_avail_idx: u16,
     /// Guest memory accessor
-    memory: M,
+    memory: GuestMemoryAccessor<T>,
 }
 
-impl<M: GuestMemoryAccess> AvailableRing<M> {
+impl<T: AddressTranslator + Clone> AvailableRing<T> {
     /// Create a new available ring
-    pub fn new(base_addr: GuestPhysAddr, size: u16, memory: M) -> Self {
+    pub fn new(base_addr: GuestPhysAddr, size: u16, memory: GuestMemoryAccessor<T>) -> Self {
         Self {
             base_addr,
             size,

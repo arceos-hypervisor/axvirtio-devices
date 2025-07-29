@@ -2,7 +2,7 @@ use crate::backend::BlockBackend;
 use crate::constants::*;
 use alloc::vec::Vec;
 use axaddrspace::GuestPhysAddr;
-use axvirtio_common::memory::GuestMemoryAccess;
+use axvirtio_common::memory::{AddressTranslator, GuestMemoryAccess, GuestMemoryAccessor};
 use log::{debug, error, trace, warn};
 
 /// Block request types
@@ -56,7 +56,7 @@ pub struct BlockRequestResult {
 
 /// Unified block request structure
 #[derive(Debug)]
-pub struct BlockRequest<M: GuestMemoryAccess> {
+pub struct BlockRequest<T: AddressTranslator + Clone> {
     /// Request type
     pub request_type: BlockRequestType,
     /// Starting sector
@@ -64,17 +64,17 @@ pub struct BlockRequest<M: GuestMemoryAccess> {
     /// Data source (buffer or guest memory)
     pub data_source: DataSource,
     /// Guest memory accessor
-    memory: M,
+    memory: GuestMemoryAccessor<T>,
 }
 
-impl<M: GuestMemoryAccess> BlockRequest<M> {
+impl<T: AddressTranslator + Clone> BlockRequest<T> {
     /// Create a new block request with guest memory buffers
     pub fn new_virtio(
         request_type: BlockRequestType,
         sector: u64,
         buffers: Vec<(GuestPhysAddr, usize, bool)>,
         status_addr: GuestPhysAddr,
-        memory: M,
+        memory: GuestMemoryAccessor<T>,
     ) -> Self {
         Self {
             request_type,
@@ -103,7 +103,7 @@ impl<M: GuestMemoryAccess> BlockRequest<M> {
             } => {
                 let status = self.execute_guest_memory_request(backend, buffers, *status_addr);
                 // Write status to guest memory using injected memory accessor
-                if let Err(_) = self.memory.write_obj(*status_addr, status) {
+                if self.memory.write_obj(*status_addr, status).is_err() {
                     error!("Failed to write status to guest memory");
                 }
                 BlockRequestResult { status }
