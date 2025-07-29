@@ -17,6 +17,7 @@ use axaddrspace::GuestPhysAddr;
 
 /// VirtIO block request header structure
 #[derive(Debug, Clone, Copy)]
+#[repr(C)]
 pub struct VirtioBlockHeader {
     /// Request type (VIRTIO_BLK_T_IN, VIRTIO_BLK_T_OUT, etc.)
     pub request_type: u32,
@@ -35,15 +36,7 @@ impl VirtioBlockHeader {
         addr: GuestPhysAddr,
         memory: &impl GuestMemoryAccess,
     ) -> VirtioResult<Self> {
-        let request_type: u32 = memory.read_obj(addr)?;
-        let ioprio: u32 = memory.read_obj(addr + 4)?;
-        let sector: u64 = memory.read_obj(addr + 8)?;
-
-        Ok(Self {
-            request_type,
-            ioprio,
-            sector,
-        })
+        memory.read_obj(addr)
     }
 }
 

@@ -56,13 +56,13 @@ impl<T: AddressTranslator> GuestMemoryAccess for GuestMemoryAccessor<T> {
         self.translator.translate_guest_to_host(guest_addr)
     }
 
-    fn read_obj<U: Copy>(&self, guest_addr: GuestPhysAddr) -> VirtioResult<U> {
+    fn read_obj<V: Copy>(&self, guest_addr: GuestPhysAddr) -> VirtioResult<V> {
         let host_addr = self
             .translate_guest_to_host(guest_addr)
             .ok_or(VirtioError::InvalidAddress)?;
 
         unsafe {
-            let ptr = host_addr.as_usize() as *const U;
+            let ptr = host_addr.as_usize() as *const V;
             Ok(core::ptr::read_volatile(ptr))
         }
     }
