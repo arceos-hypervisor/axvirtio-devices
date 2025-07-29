@@ -12,7 +12,7 @@ use crate::{
     memory::{AddressTranslator, GuestMemoryAccessor},
     GuestMemoryAccess, VirtioDeviceID,
 };
-use alloc::vec::Vec;
+use alloc::{sync::Arc, vec::Vec};
 use axaddrspace::GuestPhysAddr;
 
 /// VirtIO block request header structure
@@ -32,11 +32,14 @@ impl VirtioBlockHeader {
     pub const SIZE: u32 = 16; // type (4) + ioprio (4) + sector (8)
 
     /// Read VirtIO block header from guest memory
-    pub fn read_from_guest(
+    pub fn read_from_guest<T>(
         addr: GuestPhysAddr,
-        memory: &impl GuestMemoryAccess,
-    ) -> VirtioResult<Self> {
-        memory.read_obj(addr)
+        accessor: Arc<GuestMemoryAccessor<T>>,
+    ) -> VirtioResult<Self>
+    where
+        T: AddressTranslator,
+    {
+        accessor.read_obj(addr)
     }
 }
 
@@ -54,7 +57,7 @@ pub struct VirtioQueue<T: AddressTranslator + Clone> {
     /// Used ring
     used_ring: Option<UsedRing<T>>,
     /// Guest memory accessor
-    memory: GuestMemoryAccessor<T>,
+    accessor: Arc<GuestMemoryAccessor<T>>,
     /// Maximum queue size
     pub max_size: u16,
     /// Queue ready flag
@@ -75,14 +78,14 @@ pub struct VirtioQueue<T: AddressTranslator + Clone> {
 
 impl<T: AddressTranslator + Clone> VirtioQueue<T> {
     /// Create a new VirtIO queue
-    pub fn new(index: u16, size: u16, memory: GuestMemoryAccessor<T>) -> Self {
+    pub fn new(index: u16, size: u16, accessor: Arc<GuestMemoryAccessor<T>>) -> Self {
         Self {
             index,
             size,
             desc_table: None,
             avail_ring: None,
             used_ring: None,
-            memory,
+            accessor,
             max_size: size,
             ready: false,
             desc_table_addr: GuestPhysAddr::from(0),
@@ -107,7 +110,7 @@ impl<T: AddressTranslator + Clone> VirtioQueue<T> {
     pub fn set_desc_table_addr(&mut self, addr: GuestPhysAddr) -> VirtioResult<()> {
         self.desc_table_addr = addr;
         if addr.as_usize() != 0 {
-            self.desc_table = Some(DescriptorTable::new(addr, self.size, self.memory.clone()));
+            self.desc_table = Some(DescriptorTable::new(addr, self.size, self.accessor.clone()));
         }
         Ok(())
     }
@@ -116,7 +119,7 @@ impl<T: AddressTranslator + Clone> VirtioQueue<T> {
     pub fn set_avail_ring_addr(&mut self, addr: GuestPhysAddr) -> VirtioResult<()> {
         self.avail_ring_addr = addr;
         if addr.as_usize() != 0 {
-            self.avail_ring = Some(AvailableRing::new(addr, self.size, self.memory.clone()));
+            self.avail_ring = Some(AvailableRing::new(addr, self.size, self.accessor.clone()));
         }
         Ok(())
     }
@@ -125,7 +128,7 @@ impl<T: AddressTranslator + Clone> VirtioQueue<T> {
     pub fn set_used_ring_addr(&mut self, addr: GuestPhysAddr) -> VirtioResult<()> {
         self.used_ring_addr = addr;
         if addr.as_usize() != 0 {
-            self.used_ring = Some(UsedRing::new(addr, self.size, self.memory.clone()));
+            self.used_ring = Some(UsedRing::new(addr, self.size, self.accessor.clone()));
         }
         Ok(())
     }
@@ -286,7 +289,7 @@ impl<T: AddressTranslator + Clone> VirtioQueue<T> {
             let header_addr = header_desc.guest_addr();
 
             // Use the structured header reading
-            let header = VirtioBlockHeader::read_from_guest(header_addr, &self.memory)?;
+            let header = VirtioBlockHeader::read_from_guest(header_addr, self.accessor.clone())?;
 
             trace!(
                 "Parsed VirtIO block header: type={}, sector={}",
@@ -347,7 +350,7 @@ impl<T: AddressTranslator + Clone> VirtioQueue<T> {
         );
 
         // Write the status byte to guest memory using the new memory access interface
-        self.memory.write_obj(status_addr_guest, status)?;
+        self.accessor.write_obj(status_addr_guest, status)?;
 
         Ok(())
     }

@@ -1,3 +1,3 @@
 mod device;
 
-pub use device::VirtioMmioDevice;
+pub use device::VirtioMmioBlockDevice;

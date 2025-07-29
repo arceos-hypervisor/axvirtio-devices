@@ -62,4 +62,4 @@ pub use axvirtio_common::{MmioTransport, VirtioConfig, VirtioError, VirtioQueue,
 
 // Re-export device-specific types
 pub use backend::BlockBackend;
-pub use mmio::VirtioMmioDevice;
+pub use mmio::VirtioMmioBlockDevice;

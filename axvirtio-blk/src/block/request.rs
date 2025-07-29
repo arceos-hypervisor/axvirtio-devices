@@ -1,6 +1,6 @@
 use crate::backend::BlockBackend;
 use crate::constants::*;
-use alloc::vec::Vec;
+use alloc::{sync::Arc, vec::Vec};
 use axaddrspace::GuestPhysAddr;
 use axvirtio_common::{
     memory::{AddressTranslator, GuestMemoryAccess, GuestMemoryAccessor},
@@ -74,7 +74,7 @@ pub struct BlockRequest<T: AddressTranslator + Clone> {
     /// Data source (buffer or guest memory)
     pub data_source: DataSource,
     /// Guest memory accessor
-    memory: GuestMemoryAccessor<T>,
+    accessor: Arc<GuestMemoryAccessor<T>>,
 }
 
 impl<T: AddressTranslator + Clone> BlockRequest<T> {
@@ -84,7 +84,7 @@ impl<T: AddressTranslator + Clone> BlockRequest<T> {
         sector: u64,
         buffers: Vec<(GuestPhysAddr, usize, bool)>,
         status_addr: GuestPhysAddr,
-        memory: GuestMemoryAccessor<T>,
+        accessor: Arc<GuestMemoryAccessor<T>>,
     ) -> Self {
         Self {
             request_type,
@@ -93,7 +93,7 @@ impl<T: AddressTranslator + Clone> BlockRequest<T> {
                 buffers,
                 status_addr,
             },
-            memory,
+            accessor,
         }
     }
 
@@ -114,7 +114,7 @@ impl<T: AddressTranslator + Clone> BlockRequest<T> {
                 let status = self.execute_guest_memory_request(backend, buffers, *status_addr)?;
                 // Write status to guest memory using injected memory accessor
                 if self
-                    .memory
+                    .accessor
                     .write_obj(*status_addr, status.clone() as u8)
                     .is_err()
                 {
@@ -174,7 +174,7 @@ impl<T: AddressTranslator + Clone> BlockRequest<T> {
 
                     // Write data to guest memory using injected memory accessor
                     if let Err(e) = self
-                        .memory
+                        .accessor
                         .write_buffer(*guest_addr, &buffer[buffer_offset..end_offset])
                     {
                         error!("Failed to write data to guest memory: {:?}", e);
@@ -218,7 +218,7 @@ impl<T: AddressTranslator + Clone> BlockRequest<T> {
 
             // Read data from guest memory using injected memory accessor
             if let Err(e) = self
-                .memory
+                .accessor
                 .read_buffer(*guest_addr, &mut buffer[buffer_offset..end_offset])
             {
                 error!("Failed to read data from guest memory: {:?}", e);

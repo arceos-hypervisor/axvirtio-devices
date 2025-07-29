@@ -1,4 +1,4 @@
-use alloc::vec::Vec;
+use alloc::{sync::Arc, vec::Vec};
 use axaddrspace::{device::AccessWidth, GuestPhysAddr};
 
 use log::{error, info, trace, warn};
@@ -14,7 +14,7 @@ use axvirtio_common::{
 };
 
 /// VirtIO MMIO device state
-pub struct VirtioMmioDevice<B: BlockBackend, T: AddressTranslator + Clone> {
+pub struct VirtioMmioBlockDevice<B: BlockBackend, T: AddressTranslator + Clone> {
     /// Base IPA address
     pub(crate) base_ipa: GuestPhysAddr,
     /// MMIO region length
@@ -42,10 +42,10 @@ pub struct VirtioMmioDevice<B: BlockBackend, T: AddressTranslator + Clone> {
     /// Block backend
     backend: B,
     /// Guest memory accessor
-    memory: GuestMemoryAccessor<T>,
+    accessor: Arc<GuestMemoryAccessor<T>>,
 }
 
-impl<B: BlockBackend, T: AddressTranslator + Clone> VirtioMmioDevice<B, T> {
+impl<B: BlockBackend, T: AddressTranslator + Clone> VirtioMmioBlockDevice<B, T> {
     /// Create a new VirtIO MMIO device
     /// # Arguments
     /// * `base_ipa` - Base IPA address for the device
@@ -55,10 +55,10 @@ impl<B: BlockBackend, T: AddressTranslator + Clone> VirtioMmioDevice<B, T> {
     pub fn new(base_ipa: usize, length: usize, backend: B, transtor: T) -> VirtioResult<Self> {
         let config = VirtioConfig::new_block_device(base_ipa);
         let mut queues = Vec::new();
-        let memory = GuestMemoryAccessor::new(transtor);
+        let accessor = Arc::new(GuestMemoryAccessor::new(transtor));
 
         // Create default queue
-        queues.push(VirtioQueue::new(0, config.max_queue_size, memory.clone()));
+        queues.push(VirtioQueue::new(0, config.max_queue_size, accessor.clone()));
 
         Ok(Self {
             base_ipa: GuestPhysAddr::from(base_ipa),
@@ -74,13 +74,8 @@ impl<B: BlockBackend, T: AddressTranslator + Clone> VirtioMmioDevice<B, T> {
             interrupt_status: Mutex::new(0),
             config_generation: Mutex::new(0),
             backend,
-            memory,
+            accessor,
         })
-    }
-
-    /// Get guest memory accessor
-    pub fn memory(&self) -> &GuestMemoryAccessor<T> {
-        &self.memory
     }
 
     /// Check if device index is valid
@@ -499,7 +494,7 @@ impl<B: BlockBackend, T: AddressTranslator + Clone> VirtioMmioDevice<B, T> {
             header.sector,
             buffers,
             status_addr,
-            self.memory.clone(), // Inject memory accessor for guest memory access
+            self.accessor.clone(), // Inject memory accessor for guest memory access
         );
 
         Ok(request)
