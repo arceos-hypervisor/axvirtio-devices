@@ -1,5 +1,5 @@
 use crate::error::{VirtioError, VirtioResult};
-use crate::memory::{AddressTranslator, GuestMemoryAccess, GuestMemoryAccessor};
+use crate::memory::{AddressTranslator, GuestMemoryAccessor};
 use crate::{constants::*, VirtioDeviceID};
 use alloc::sync::Arc;
 use alloc::vec::Vec;

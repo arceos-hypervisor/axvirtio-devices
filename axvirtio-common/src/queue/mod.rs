@@ -10,7 +10,7 @@ pub use used::{UsedRing, VirtQueueUsed, VirtqUsedElem};
 use crate::{
     error::{VirtioError, VirtioResult},
     memory::{AddressTranslator, GuestMemoryAccessor},
-    GuestMemoryAccess, VirtioDeviceID,
+    VirtioDeviceID,
 };
 use alloc::{sync::Arc, vec::Vec};
 use axaddrspace::GuestPhysAddr;

@@ -1,6 +1,6 @@
 use crate::constants::*;
 use crate::error::{VirtioError, VirtioResult};
-use crate::memory::{AddressTranslator, GuestMemoryAccess, GuestMemoryAccessor};
+use crate::memory::{AddressTranslator, GuestMemoryAccessor};
 use alloc::sync::Arc;
 use axaddrspace::GuestPhysAddr;
 

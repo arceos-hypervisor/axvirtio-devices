@@ -3,7 +3,7 @@ use crate::constants::*;
 use alloc::{sync::Arc, vec::Vec};
 use axaddrspace::GuestPhysAddr;
 use axvirtio_common::{
-    memory::{AddressTranslator, GuestMemoryAccess, GuestMemoryAccessor},
+    memory::{AddressTranslator, GuestMemoryAccessor},
     VirtioResult,
 };
 use log::{debug, error, trace, warn};
