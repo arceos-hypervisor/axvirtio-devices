@@ -25,7 +25,7 @@ pub mod queue;
 
 /// Re-export commonly used types
 pub use config::VirtioConfig;
-pub use device_type::VirtioDeviceType;
+pub use device_type::VirtioDeviceID;
 pub use error::{VirtioError, VirtioResult};
 pub use memory::{AddressTranslator, GuestMemoryAccess};
 pub use mmio::MmioTransport;

@@ -1,17 +1,16 @@
 use axaddrspace::{device::AccessWidth, GuestPhysAddr};
-use axerrno::AxResult;
 
-use crate::{error::VirtioError, VIRTIO_MMIO_CONFIG};
+use crate::{error::VirtioError, VirtioResult, VIRTIO_MMIO_CONFIG_OFFSET};
 
 /// MMIO transport layer utilities
 pub struct MmioTransport;
 
 impl MmioTransport {
     /// Validate MMIO access width
-    pub fn validate_access_width(width: AccessWidth) -> AxResult<()> {
+    pub fn validate_access_width(width: AccessWidth) -> VirtioResult<()> {
         // VirtIO MMIO requires 32-bit accesses for registers
         if width != AccessWidth::Dword {
-            return Err(VirtioError::InvalidAccessWidth.into());
+            return Err(VirtioError::InvalidAccessWidth);
         }
         Ok(())
     }
@@ -33,7 +32,7 @@ impl MmioTransport {
         width: AccessWidth,
         base_addr: GuestPhysAddr,
         size: usize,
-    ) -> AxResult<usize> {
+    ) -> VirtioResult<usize> {
         // Check if address is in range
         if !Self::is_address_in_range(addr, base_addr, size) {
             return Ok(0); // Return 0 for out-of-range reads
@@ -41,7 +40,7 @@ impl MmioTransport {
 
         // Validate access width for configuration registers
         let offset = Self::calculate_offset(addr, base_addr);
-        if offset < VIRTIO_MMIO_CONFIG {
+        if offset < VIRTIO_MMIO_CONFIG_OFFSET {
             // Configuration registers require 32-bit access
             Self::validate_access_width(width)?;
         }
@@ -55,7 +54,7 @@ impl MmioTransport {
         width: AccessWidth,
         base_addr: GuestPhysAddr,
         size: usize,
-    ) -> AxResult<usize> {
+    ) -> VirtioResult<usize> {
         // Check if address is in range
         if !Self::is_address_in_range(addr, base_addr, size) {
             return Ok(0); // Ignore out-of-range writes
@@ -63,7 +62,7 @@ impl MmioTransport {
 
         // Validate access width for configuration registers
         let offset = Self::calculate_offset(addr, base_addr);
-        if offset < VIRTIO_MMIO_CONFIG {
+        if offset < VIRTIO_MMIO_CONFIG_OFFSET {
             // Configuration registers require 32-bit access
             Self::validate_access_width(width)?;
         }
@@ -84,14 +83,32 @@ impl MmioTransport {
     }
 
     /// Convert bytes to value based on width
-    pub fn bytes_to_value(data: &[u8], width: AccessWidth) -> usize {
+    pub fn bytes_to_value(data: &[u8], width: AccessWidth) -> VirtioResult<usize> {
         match width {
-            AccessWidth::Byte => data[0] as usize,
-            AccessWidth::Word => u16::from_le_bytes([data[0], data[1]]) as usize,
-            AccessWidth::Dword => u32::from_le_bytes([data[0], data[1], data[2], data[3]]) as usize,
-            AccessWidth::Qword => u64::from_le_bytes([
-                data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
-            ]) as usize,
+            AccessWidth::Byte => {
+                let (bytes, _) = data
+                    .split_first_chunk::<1>()
+                    .ok_or(VirtioError::InvalidBufferSize)?;
+                Ok(u8::from_le_bytes(*bytes) as usize)
+            }
+            AccessWidth::Word => {
+                let (bytes, _) = data
+                    .split_first_chunk::<2>()
+                    .ok_or(VirtioError::InvalidBufferSize)?;
+                Ok(u16::from_le_bytes(*bytes) as usize)
+            }
+            AccessWidth::Dword => {
+                let (bytes, _) = data
+                    .split_first_chunk::<4>()
+                    .ok_or(VirtioError::InvalidBufferSize)?;
+                Ok(u32::from_le_bytes(*bytes) as usize)
+            }
+            AccessWidth::Qword => {
+                let (bytes, _) = data
+                    .split_first_chunk::<8>()
+                    .ok_or(VirtioError::InvalidBufferSize)?;
+                Ok(u64::from_le_bytes(*bytes) as usize)
+            }
         }
     }
 }

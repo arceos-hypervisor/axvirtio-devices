@@ -1,4 +1,4 @@
-use crate::{constants::*, VirtioDeviceType};
+use crate::{constants::*, VirtioDeviceID};
 use axaddrspace::GuestPhysAddr;
 /// Configuration for VirtIO devices with device index mapping
 #[derive(Debug, Clone)]
@@ -20,7 +20,7 @@ pub struct VirtioConfig {
     /// Device features supported
     pub device_features: u64,
     /// Device Type
-    pub device_type: VirtioDeviceType,
+    pub device_type: VirtioDeviceID,
 }
 
 impl VirtioConfig {
@@ -30,7 +30,7 @@ impl VirtioConfig {
         device_id: u32,
         device_features: u64,
         num_queues: u16,
-        device_type: VirtioDeviceType,
+        device_type: VirtioDeviceID,
     ) -> Self {
         Self {
             base_addr: GuestPhysAddr::from(base_ipa),
@@ -54,7 +54,7 @@ impl VirtioConfig {
             VIRTIO_DEVICE_ID_BLOCK,
             features,
             1,
-            VirtioDeviceType::Block,
+            VirtioDeviceID::Block,
         )
     }
 }

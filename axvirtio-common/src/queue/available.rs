@@ -6,14 +6,14 @@ use axaddrspace::GuestPhysAddr;
 /// VirtIO available ring structure
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default)]
-pub struct VirtqAvail {
+pub struct VirtQueueAvail {
     /// Flags
     pub flags: u16,
     /// Index of the next available descriptor
     pub idx: u16,
 }
 
-impl VirtqAvail {
+impl VirtQueueAvail {
     /// Create a new available ring header
     pub fn new() -> Self {
         Self { flags: 0, idx: 0 }
@@ -65,7 +65,7 @@ impl<T: AddressTranslator + Clone> AvailableRing<T> {
 
     /// Get the address of the ring array
     pub fn ring_addr(&self) -> GuestPhysAddr {
-        self.base_addr + core::mem::size_of::<VirtqAvail>()
+        self.base_addr + core::mem::size_of::<VirtQueueAvail>()
     }
 
     /// Get the address of a specific ring entry
@@ -74,19 +74,19 @@ impl<T: AddressTranslator + Clone> AvailableRing<T> {
             return None;
         }
 
-        let offset = core::mem::size_of::<VirtqAvail>() + (index as usize * 2);
+        let offset = core::mem::size_of::<VirtQueueAvail>() + (index as usize * 2);
         Some(self.base_addr + offset)
     }
 
     /// Get the address of the used event field (if event_idx is enabled)
     pub fn used_event_addr(&self) -> GuestPhysAddr {
-        let offset = core::mem::size_of::<VirtqAvail>() + (self.size as usize * 2);
+        let offset = core::mem::size_of::<VirtQueueAvail>() + (self.size as usize * 2);
         self.base_addr + offset
     }
 
     /// Calculate the total size of the available ring
     pub fn total_size(&self) -> usize {
-        core::mem::size_of::<VirtqAvail>() + (self.size as usize * 2) + 2
+        core::mem::size_of::<VirtQueueAvail>() + (self.size as usize * 2) + 2
     }
 
     /// Check if the available ring is valid
@@ -105,7 +105,7 @@ impl<T: AddressTranslator + Clone> AvailableRing<T> {
     }
 
     /// Read the available ring header
-    pub fn read_avail_header(&self) -> VirtioResult<VirtqAvail> {
+    pub fn read_avail_header(&self) -> VirtioResult<VirtQueueAvail> {
         if !self.is_valid() {
             return Err(VirtioError::QueueNotReady);
         }
@@ -114,7 +114,7 @@ impl<T: AddressTranslator + Clone> AvailableRing<T> {
     }
 
     /// Write the available ring header
-    pub fn write_avail_header(&self, header: &VirtqAvail) -> VirtioResult<()> {
+    pub fn write_avail_header(&self, header: &VirtQueueAvail) -> VirtioResult<()> {
         if !self.is_valid() {
             return Err(VirtioError::QueueNotReady);
         }

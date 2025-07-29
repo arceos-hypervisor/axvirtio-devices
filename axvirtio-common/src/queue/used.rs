@@ -23,7 +23,7 @@ impl VirtqUsedElem {
 /// VirtIO used ring structure
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default)]
-pub struct VirtqUsed {
+pub struct VirtQueueUsed {
     /// Flags
     pub flags: u16,
     /// Index of the next used element
@@ -31,7 +31,7 @@ pub struct VirtqUsed {
     // Ring of used elements (variable length)
 }
 
-impl VirtqUsed {
+impl VirtQueueUsed {
     /// Create a new used ring header
     pub fn new() -> Self {
         Self { flags: 0, idx: 0 }
@@ -83,7 +83,7 @@ impl<T: AddressTranslator + Clone> UsedRing<T> {
 
     /// Get the address of the ring array
     pub fn ring_addr(&self) -> GuestPhysAddr {
-        self.base_addr + core::mem::size_of::<VirtqUsed>()
+        self.base_addr + core::mem::size_of::<VirtQueueUsed>()
     }
 
     /// Get the address of a specific ring entry
@@ -92,21 +92,21 @@ impl<T: AddressTranslator + Clone> UsedRing<T> {
             return None;
         }
 
-        let offset = core::mem::size_of::<VirtqUsed>()
+        let offset = core::mem::size_of::<VirtQueueUsed>()
             + (index as usize * core::mem::size_of::<VirtqUsedElem>());
         Some(self.base_addr + offset)
     }
 
     /// Get the address of the available event field (if event_idx is enabled)
     pub fn avail_event_addr(&self) -> GuestPhysAddr {
-        let offset = core::mem::size_of::<VirtqUsed>()
+        let offset = core::mem::size_of::<VirtQueueUsed>()
             + (self.size as usize * core::mem::size_of::<VirtqUsedElem>());
         self.base_addr + offset
     }
 
     /// Calculate the total size of the used ring
     pub fn total_size(&self) -> usize {
-        core::mem::size_of::<VirtqUsed>()
+        core::mem::size_of::<VirtQueueUsed>()
             + (self.size as usize * core::mem::size_of::<VirtqUsedElem>())
             + 2
     }
@@ -157,7 +157,7 @@ impl<T: AddressTranslator + Clone> UsedRing<T> {
     }
 
     /// Read the used ring header
-    pub fn read_used_header(&self) -> VirtioResult<VirtqUsed> {
+    pub fn read_used_header(&self) -> VirtioResult<VirtQueueUsed> {
         if !self.is_valid() {
             return Err(VirtioError::QueueNotReady);
         }
@@ -166,7 +166,7 @@ impl<T: AddressTranslator + Clone> UsedRing<T> {
     }
 
     /// Write the used ring header
-    pub fn write_used_header(&self, header: &VirtqUsed) -> VirtioResult<()> {
+    pub fn write_used_header(&self, header: &VirtQueueUsed) -> VirtioResult<()> {
         if !self.is_valid() {
             return Err(VirtioError::QueueNotReady);
         }

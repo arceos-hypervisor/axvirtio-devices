@@ -2,15 +2,15 @@ mod available;
 mod descriptor;
 mod used;
 
-pub use available::{AvailableRing, VirtqAvail};
-pub use descriptor::{DescriptorTable, VirtqDesc};
+pub use available::{AvailableRing, VirtQueueAvail};
+pub use descriptor::{DescriptorTable, VirtQueueDesc};
 use log::{trace, warn};
-pub use used::{UsedRing, VirtqUsed, VirtqUsedElem};
+pub use used::{UsedRing, VirtQueueUsed, VirtqUsedElem};
 
 use crate::{
     error::{VirtioError, VirtioResult},
     memory::{AddressTranslator, GuestMemoryAccessor},
-    GuestMemoryAccess, VirtioDeviceType,
+    GuestMemoryAccess, VirtioDeviceID,
 };
 use alloc::vec::Vec;
 use axaddrspace::GuestPhysAddr;
@@ -311,7 +311,7 @@ impl<T: AddressTranslator + Clone> VirtioQueue<T> {
     pub fn get_data_buffers(
         &self,
         head_index: u16,
-        device_type: VirtioDeviceType,
+        device_type: VirtioDeviceID,
     ) -> VirtioResult<Vec<(axaddrspace::GuestPhysAddr, usize, bool)>> {
         if let Some(ref desc_table) = self.desc_table {
             desc_table.get_data_buffers(head_index, device_type)

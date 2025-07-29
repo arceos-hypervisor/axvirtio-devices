@@ -2,7 +2,10 @@ use crate::backend::BlockBackend;
 use crate::constants::*;
 use alloc::vec::Vec;
 use axaddrspace::GuestPhysAddr;
-use axvirtio_common::memory::{AddressTranslator, GuestMemoryAccess, GuestMemoryAccessor};
+use axvirtio_common::{
+    memory::{AddressTranslator, GuestMemoryAccess, GuestMemoryAccessor},
+    VirtioResult,
+};
 use log::{debug, error, trace, warn};
 
 /// Block request types
@@ -14,6 +17,8 @@ pub enum BlockRequestType {
     Write,
     /// Flush request
     Flush,
+    /// Unsupported request
+    Unsupported,
 }
 
 impl From<u32> for BlockRequestType {
@@ -22,7 +27,7 @@ impl From<u32> for BlockRequestType {
             VIRTIO_BLK_T_IN => BlockRequestType::Read,
             VIRTIO_BLK_T_OUT => BlockRequestType::Write,
             VIRTIO_BLK_T_FLUSH => BlockRequestType::Flush,
-            _ => BlockRequestType::Read, // Default to read for unknown types
+            _ => BlockRequestType::Unsupported, // Default to read for unknown types
         }
     }
 }
@@ -33,6 +38,7 @@ impl From<BlockRequestType> for u32 {
             BlockRequestType::Read => VIRTIO_BLK_T_IN,
             BlockRequestType::Write => VIRTIO_BLK_T_OUT,
             BlockRequestType::Flush => VIRTIO_BLK_T_FLUSH,
+            BlockRequestType::Unsupported => VIRTIO_BLK_T_IN,
         }
     }
 }
@@ -48,17 +54,21 @@ pub enum DataSource {
 }
 
 /// Block request processing result
-#[derive(Debug)]
-pub struct BlockRequestResult {
-    /// Request status
-    pub status: u8,
+#[derive(Debug, Clone)]
+pub enum BlockRequestResult {
+    /// Request completed successfully
+    Ok = VIRTIO_BLK_S_OK,
+    /// I/O error occurred
+    IoError = VIRTIO_BLK_S_IOERR,
+    /// Unsupported request type
+    Unsupported = VIRTIO_BLK_S_UNSUPP,
 }
 
 /// Unified block request structure
 #[derive(Debug)]
 pub struct BlockRequest<T: AddressTranslator + Clone> {
     /// Request type
-    pub request_type: BlockRequestType,
+    pub request_type: u32,
     /// Starting sector
     pub sector: u64,
     /// Data source (buffer or guest memory)
@@ -70,7 +80,7 @@ pub struct BlockRequest<T: AddressTranslator + Clone> {
 impl<T: AddressTranslator + Clone> BlockRequest<T> {
     /// Create a new block request with guest memory buffers
     pub fn new_virtio(
-        request_type: BlockRequestType,
+        request_type: u32,
         sector: u64,
         buffers: Vec<(GuestPhysAddr, usize, bool)>,
         status_addr: GuestPhysAddr,
@@ -95,18 +105,23 @@ impl<T: AddressTranslator + Clone> BlockRequest<T> {
     }
 
     /// Execute the request and return result
-    pub fn execute(&self, backend: &dyn BlockBackend) -> BlockRequestResult {
+    pub fn execute(&self, backend: &dyn BlockBackend) -> VirtioResult<BlockRequestResult> {
         match &self.data_source {
             DataSource::GuestMemory {
                 buffers,
                 status_addr,
             } => {
-                let status = self.execute_guest_memory_request(backend, buffers, *status_addr);
+                let status = self.execute_guest_memory_request(backend, buffers, *status_addr)?;
                 // Write status to guest memory using injected memory accessor
-                if self.memory.write_obj(*status_addr, status).is_err() {
+                if self
+                    .memory
+                    .write_obj(*status_addr, status.clone() as u8)
+                    .is_err()
+                {
                     error!("Failed to write status to guest memory");
+                    return Ok(BlockRequestResult::IoError);
                 }
-                BlockRequestResult { status }
+                Ok(status)
             }
         }
     }
@@ -117,11 +132,12 @@ impl<T: AddressTranslator + Clone> BlockRequest<T> {
         backend: &dyn BlockBackend,
         buffers: &[(GuestPhysAddr, usize, bool)],
         _status_addr: GuestPhysAddr,
-    ) -> u8 {
-        match self.request_type {
+    ) -> VirtioResult<BlockRequestResult> {
+        match BlockRequestType::from(self.request_type) {
             BlockRequestType::Read => self.handle_read_request_guest_memory(backend, buffers),
             BlockRequestType::Write => self.handle_write_request_guest_memory(backend, buffers),
             BlockRequestType::Flush => self.handle_flush_request_guest_memory(backend),
+            BlockRequestType::Unsupported => Ok(BlockRequestResult::Unsupported),
         }
     }
 
@@ -130,7 +146,7 @@ impl<T: AddressTranslator + Clone> BlockRequest<T> {
         &self,
         backend: &dyn BlockBackend,
         buffers: &[(GuestPhysAddr, usize, bool)],
-    ) -> u8 {
+    ) -> VirtioResult<BlockRequestResult> {
         let total_len = self.size();
         let mut buffer = vec![0u8; total_len];
 
@@ -153,7 +169,7 @@ impl<T: AddressTranslator + Clone> BlockRequest<T> {
                     let end_offset = buffer_offset + len;
                     if end_offset > buffer.len() {
                         warn!("Data buffer exceeds read data range");
-                        return VIRTIO_BLK_S_IOERR;
+                        return Ok(BlockRequestResult::IoError);
                     }
 
                     // Write data to guest memory using injected memory accessor
@@ -162,17 +178,17 @@ impl<T: AddressTranslator + Clone> BlockRequest<T> {
                         .write_buffer(*guest_addr, &buffer[buffer_offset..end_offset])
                     {
                         error!("Failed to write data to guest memory: {:?}", e);
-                        return VIRTIO_BLK_S_IOERR;
+                        return Ok(BlockRequestResult::IoError);
                     }
 
                     buffer_offset = end_offset;
                 }
 
-                VIRTIO_BLK_S_OK
+                Ok(BlockRequestResult::Ok)
             }
             Err(e) => {
                 error!("Failed to read from backend: {:?}", e);
-                VIRTIO_BLK_S_IOERR
+                Ok(BlockRequestResult::IoError)
             }
         }
     }
@@ -182,7 +198,7 @@ impl<T: AddressTranslator + Clone> BlockRequest<T> {
         &self,
         backend: &dyn BlockBackend,
         buffers: &[(GuestPhysAddr, usize, bool)],
-    ) -> u8 {
+    ) -> VirtioResult<BlockRequestResult> {
         let total_len = self.size();
         let mut buffer = vec![0u8; total_len];
         let mut buffer_offset = 0;
@@ -197,7 +213,7 @@ impl<T: AddressTranslator + Clone> BlockRequest<T> {
             let end_offset = buffer_offset + len;
             if end_offset > buffer.len() {
                 warn!("Data buffer exceeds write data range");
-                return VIRTIO_BLK_S_IOERR;
+                return Ok(BlockRequestResult::Unsupported);
             }
 
             // Read data from guest memory using injected memory accessor
@@ -206,7 +222,7 @@ impl<T: AddressTranslator + Clone> BlockRequest<T> {
                 .read_buffer(*guest_addr, &mut buffer[buffer_offset..end_offset])
             {
                 error!("Failed to read data from guest memory: {:?}", e);
-                return VIRTIO_BLK_S_IOERR;
+                return Ok(BlockRequestResult::IoError);
             }
 
             buffer_offset = end_offset;
@@ -220,26 +236,29 @@ impl<T: AddressTranslator + Clone> BlockRequest<T> {
                     bytes_written,
                     self.sector
                 );
-                VIRTIO_BLK_S_OK
+                Ok(BlockRequestResult::Ok)
             }
             Err(e) => {
                 error!("Failed to write to backend: {:?}", e);
-                VIRTIO_BLK_S_IOERR
+                Ok(BlockRequestResult::IoError)
             }
         }
     }
 
     /// Handle flush request with guest memory
-    fn handle_flush_request_guest_memory(&self, backend: &dyn BlockBackend) -> u8 {
+    fn handle_flush_request_guest_memory(
+        &self,
+        backend: &dyn BlockBackend,
+    ) -> VirtioResult<BlockRequestResult> {
         // Flush the backend
         match backend.flush() {
             Ok(_) => {
                 debug!("Flushed backend");
-                VIRTIO_BLK_S_OK
+                Ok(BlockRequestResult::Ok)
             }
             Err(e) => {
                 error!("Failed to flush backend: {:?}", e);
-                VIRTIO_BLK_S_IOERR
+                Ok(BlockRequestResult::IoError)
             }
         }
     }

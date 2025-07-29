@@ -1,13 +1,13 @@
 use crate::error::{VirtioError, VirtioResult};
 use crate::memory::{AddressTranslator, GuestMemoryAccess, GuestMemoryAccessor};
-use crate::{constants::*, VirtioDeviceType};
+use crate::{constants::*, VirtioDeviceID};
 use alloc::vec::Vec;
 use axaddrspace::GuestPhysAddr;
 
 /// VirtIO queue descriptor
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
-pub struct VirtqDesc {
+pub struct VirtQueueDesc {
     /// Address (guest-physical)
     pub addr: u64,
     /// Length
@@ -18,7 +18,7 @@ pub struct VirtqDesc {
     pub next: u16,
 }
 
-impl VirtqDesc {
+impl VirtQueueDesc {
     /// Create a new descriptor
     pub fn new(addr: u64, len: u32, flags: u16, next: u16) -> Self {
         Self {
@@ -114,13 +114,13 @@ impl<T: AddressTranslator + Clone> DescriptorTable<T> {
             return None;
         }
 
-        let offset = index as usize * core::mem::size_of::<VirtqDesc>();
+        let offset = index as usize * core::mem::size_of::<VirtQueueDesc>();
         Some(self.base_addr + offset)
     }
 
     /// Calculate the total size of the descriptor table
     pub fn total_size(&self) -> usize {
-        self.size as usize * core::mem::size_of::<VirtqDesc>()
+        self.size as usize * core::mem::size_of::<VirtQueueDesc>()
     }
 
     /// Check if the descriptor table is valid
@@ -129,7 +129,7 @@ impl<T: AddressTranslator + Clone> DescriptorTable<T> {
     }
 
     /// Read a descriptor from the table
-    pub fn read_desc(&self, index: u16) -> VirtioResult<VirtqDesc> {
+    pub fn read_desc(&self, index: u16) -> VirtioResult<VirtQueueDesc> {
         if !self.is_valid() {
             return Err(VirtioError::QueueNotReady);
         }
@@ -140,7 +140,7 @@ impl<T: AddressTranslator + Clone> DescriptorTable<T> {
     }
 
     /// Write a descriptor to the table
-    pub fn write_desc(&self, index: u16, desc: &VirtqDesc) -> VirtioResult<()> {
+    pub fn write_desc(&self, index: u16, desc: &VirtQueueDesc) -> VirtioResult<()> {
         if !self.is_valid() {
             return Err(VirtioError::QueueNotReady);
         }
@@ -153,7 +153,7 @@ impl<T: AddressTranslator + Clone> DescriptorTable<T> {
     }
 
     /// Follow a descriptor chain starting from the given index
-    pub fn follow_chain(&self, head_index: u16) -> VirtioResult<Vec<VirtqDesc>> {
+    pub fn follow_chain(&self, head_index: u16) -> VirtioResult<Vec<VirtQueueDesc>> {
         if !self.is_valid() {
             return Err(VirtioError::QueueNotReady);
         }
@@ -219,16 +219,16 @@ impl<T: AddressTranslator + Clone> DescriptorTable<T> {
     pub fn get_data_buffers(
         &self,
         head_index: u16,
-        device_type: VirtioDeviceType,
+        device_type: VirtioDeviceID,
     ) -> VirtioResult<Vec<(GuestPhysAddr, usize, bool)>> {
         let descriptors = self.follow_chain(head_index)?;
 
-        if descriptors.len() < 2 && device_type == VirtioDeviceType::Block {
+        if descriptors.len() < 2 && device_type == VirtioDeviceID::Block {
             return Ok(Vec::new());
         }
 
         let mut buffers = Vec::new();
-        if device_type == VirtioDeviceType::Block {
+        if device_type == VirtioDeviceID::Block {
             for desc in &descriptors[1..descriptors.len() - 1] {
                 buffers.push((
                     GuestPhysAddr::from(desc.addr as usize),

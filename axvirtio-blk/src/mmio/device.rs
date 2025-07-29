@@ -1,13 +1,11 @@
 use alloc::vec::Vec;
 use axaddrspace::{device::AccessWidth, GuestPhysAddr};
-use axerrno::AxResult;
 
 use log::{error, info, trace, warn};
 use spin::Mutex;
 
 use crate::backend::BlockBackend;
 use crate::block::config::VirtioBlockConfig;
-use crate::block::request::BlockRequestType;
 use crate::block::BlockRequest;
 use crate::constants::*;
 use axvirtio_common::{
@@ -107,7 +105,7 @@ impl<B: BlockBackend, T: AddressTranslator + Clone> VirtioMmioDevice<B, T> {
     }
 
     /// Handle MMIO read operations
-    pub fn mmio_read(&self, addr: GuestPhysAddr, width: AccessWidth) -> AxResult<usize> {
+    pub fn mmio_read(&self, addr: GuestPhysAddr, width: AccessWidth) -> VirtioResult<usize> {
         // Check if device is enabled
         if !self.is_enabled() {
             return Ok(0);
@@ -172,10 +170,11 @@ impl<B: BlockBackend, T: AddressTranslator + Clone> VirtioMmioDevice<B, T> {
             VIRTIO_MMIO_CONFIG_GENERATION => *self.config_generation.lock(),
             _ => {
                 // Check if this is a config space read (offset >= 0x100)
-                if offset >= VIRTIO_MMIO_CONFIG {
-                    self.read_config_space((offset - VIRTIO_MMIO_CONFIG) as u64, width)? as u32
+                if offset >= VIRTIO_MMIO_CONFIG_OFFSET {
+                    self.read_config_space((offset - VIRTIO_MMIO_CONFIG_OFFSET) as u64, width)?
+                        as u32
                 } else {
-                    return Err(VirtioError::InvalidRegister.into());
+                    return Err(VirtioError::InvalidRegister);
                 }
             }
         };
@@ -184,7 +183,12 @@ impl<B: BlockBackend, T: AddressTranslator + Clone> VirtioMmioDevice<B, T> {
     }
 
     /// Handle MMIO write operations
-    pub fn mmio_write(&self, addr: GuestPhysAddr, width: AccessWidth, val: usize) -> AxResult<()> {
+    pub fn mmio_write(
+        &self,
+        addr: GuestPhysAddr,
+        width: AccessWidth,
+        val: usize,
+    ) -> VirtioResult<()> {
         // Check if device is enabled
         if !self.is_enabled() {
             return Ok(());
@@ -303,7 +307,7 @@ impl<B: BlockBackend, T: AddressTranslator + Clone> VirtioMmioDevice<B, T> {
                 }
             }
             _ => {
-                return Err(VirtioError::InvalidRegister.into());
+                return Err(VirtioError::InvalidRegister);
             }
         }
 
@@ -424,7 +428,11 @@ impl<B: BlockBackend, T: AddressTranslator + Clone> VirtioMmioDevice<B, T> {
     }
 
     /// Process a descriptor chain
-    fn process_descriptor_chain(&self, queue: &VirtioQueue<T>, head_index: u16) -> AxResult<()> {
+    fn process_descriptor_chain(
+        &self,
+        queue: &VirtioQueue<T>,
+        head_index: u16,
+    ) -> VirtioResult<()> {
         // Parse the descriptor chain to extract the request
         let request = self.parse_virtio_request(queue, head_index)?;
 
@@ -442,17 +450,17 @@ impl<B: BlockBackend, T: AddressTranslator + Clone> VirtioMmioDevice<B, T> {
         &self,
         queue: &VirtioQueue<T>,
         head_index: u16,
-    ) -> AxResult<BlockRequest<T>> {
+    ) -> VirtioResult<BlockRequest<T>> {
         // Validate the descriptor chain
         match queue.validate_virtio_block_chain(head_index, MIN_DESCRIPTOR_CHAIN_LENGTH) {
             Ok(true) => {}
             Ok(false) => {
                 error!("Invalid VirtIO block descriptor chain");
-                return Err(VirtioError::InvalidQueue.into());
+                return Err(VirtioError::InvalidQueue);
             }
             Err(e) => {
                 error!("Failed to validate descriptor chain: {:?}", e);
-                return Err(VirtioError::InvalidQueue.into());
+                return Err(VirtioError::InvalidQueue);
             }
         }
 
@@ -461,7 +469,7 @@ impl<B: BlockBackend, T: AddressTranslator + Clone> VirtioMmioDevice<B, T> {
             Ok(header) => header,
             Err(e) => {
                 error!("Failed to parse VirtIO block header: {:?}", e);
-                return Err(VirtioError::InvalidQueue.into());
+                return Err(VirtioError::InvalidQueue);
             }
         };
 
@@ -470,7 +478,7 @@ impl<B: BlockBackend, T: AddressTranslator + Clone> VirtioMmioDevice<B, T> {
             Ok(buffers) => buffers,
             Err(e) => {
                 error!("Failed to get data buffers: {:?}", e);
-                return Err(VirtioError::InvalidQueue.into());
+                return Err(VirtioError::InvalidQueue);
             }
         };
 
@@ -481,27 +489,27 @@ impl<B: BlockBackend, T: AddressTranslator + Clone> VirtioMmioDevice<B, T> {
             Ok(addr) => addr,
             Err(e) => {
                 error!("Failed to get status address: {:?}", e);
-                return Err(VirtioError::InvalidQueue.into());
+                return Err(VirtioError::InvalidQueue);
             }
         };
 
         // Create request object with memory accessor
         let request = BlockRequest::new_virtio(
-            BlockRequestType::from(header.request_type),
+            header.request_type,
             header.sector,
             buffers,
             status_addr,
-            self.memory.clone(), // 传入内存访问器
+            self.memory.clone(), // Inject memory accessor for guest memory access
         );
 
         Ok(request)
     }
 
     /// Execute a block request
-    fn execute_block_request(&self, request: &BlockRequest<T>) -> AxResult<u8> {
+    fn execute_block_request(&self, request: &BlockRequest<T>) -> VirtioResult<u8> {
         // Execute the request using the backend
-        let result = request.execute(&self.backend);
-        Ok(result.status)
+        let status = request.execute(&self.backend)?;
+        Ok(status as u8)
     }
 
     /// Add a used buffer to the used ring
@@ -617,7 +625,7 @@ impl<B: BlockBackend, T: AddressTranslator + Clone> VirtioMmioDevice<B, T> {
     }
 
     /// Read from device configuration space
-    fn read_config_space(&self, offset: u64, width: AccessWidth) -> AxResult<usize> {
+    fn read_config_space(&self, offset: u64, width: AccessWidth) -> VirtioResult<usize> {
         // Validate access width - config space typically uses 32-bit accesses
         MmioTransport::validate_access_width(width)?;
 

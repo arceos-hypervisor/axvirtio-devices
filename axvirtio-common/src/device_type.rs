@@ -3,7 +3,7 @@ use core::fmt;
 /// VirtIO device types (simplified version)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u32)]
-pub enum VirtioDeviceType {
+pub enum VirtioDeviceID {
     /// Invalid/Unknown device type
     Invalid = 0,
 
@@ -17,7 +17,7 @@ pub enum VirtioDeviceType {
     Console = 3,
 }
 
-impl VirtioDeviceType {
+impl VirtioDeviceID {
     /// Convert device ID to device type
     pub fn from_device_id(device_id: u32) -> Self {
         match device_id {
@@ -50,18 +50,30 @@ impl VirtioDeviceType {
     }
 
     /// Get all supported device types
-    pub fn all_types() -> &'static [VirtioDeviceType] {
+    pub fn all_types() -> &'static [VirtioDeviceID] {
         &[Self::Network, Self::Block, Self::Console]
     }
 }
 
-impl fmt::Display for VirtioDeviceType {
+impl From<u32> for VirtioDeviceID {
+    fn from(value: u32) -> Self {
+        Self::from_device_id(value)
+    }
+}
+
+impl From<usize> for VirtioDeviceID {
+    fn from(value: usize) -> Self {
+        Self::from_device_id(value as u32)
+    }
+}
+
+impl fmt::Display for VirtioDeviceID {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{} ({})", self.name(), self.to_device_id())
     }
 }
 
-impl Default for VirtioDeviceType {
+impl Default for VirtioDeviceID {
     fn default() -> Self {
         Self::Invalid
     }
