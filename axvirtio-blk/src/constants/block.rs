@@ -86,9 +86,6 @@ pub const VIRTIO_BLK_S_IOERR: u8 = 1;
 /// Standard sector size in bytes
 pub const SECTOR_SIZE: u32 = 512;
 
-/// Sector size as u64 for calculations
-pub const SECTOR_SIZE_U64: u64 = 512;
-
 /// Default capacity in sectors (1MB = 2048 sectors)
 pub const DEFAULT_CAPACITY_SECTORS: u64 = 64 * 2048;
 

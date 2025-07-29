@@ -1,5 +1,5 @@
 use crate::error::{VirtioError, VirtioResult};
-use crate::memory::{read_guest_obj, write_guest_obj};
+use crate::memory::GuestMemoryAccess;
 use crate::{constants::*, VirtioDeviceType};
 use alloc::vec::Vec;
 use axaddrspace::GuestPhysAddr;
@@ -89,17 +89,23 @@ impl VirtqDesc {
 
 /// Descriptor table management
 #[derive(Debug, Clone)]
-pub struct DescriptorTable {
+pub struct DescriptorTable<M: GuestMemoryAccess> {
     /// Base address of the descriptor table
     pub base_addr: GuestPhysAddr,
     /// Number of descriptors
     pub size: u16,
+    /// Guest memory accessor
+    memory: M,
 }
 
-impl DescriptorTable {
+impl<M: GuestMemoryAccess> DescriptorTable<M> {
     /// Create a new descriptor table
-    pub fn new(base_addr: GuestPhysAddr, size: u16) -> Self {
-        Self { base_addr, size }
+    pub fn new(base_addr: GuestPhysAddr, size: u16, memory: M) -> Self {
+        Self {
+            base_addr,
+            size,
+            memory,
+        }
     }
 
     /// Get the address of a specific descriptor
@@ -130,7 +136,7 @@ impl DescriptorTable {
 
         let desc_addr = self.desc_addr(index).ok_or(VirtioError::InvalidQueue)?;
 
-        read_guest_obj(desc_addr)
+        self.memory.read_obj(desc_addr)
     }
 
     /// Write a descriptor to the table
@@ -141,7 +147,7 @@ impl DescriptorTable {
 
         let desc_addr = self.desc_addr(index).ok_or(VirtioError::InvalidQueue)?;
 
-        write_guest_obj(desc_addr, *desc)?;
+        self.memory.write_obj(desc_addr, *desc)?;
 
         Ok(())
     }

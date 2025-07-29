@@ -2,7 +2,7 @@ use crate::backend::BlockBackend;
 use crate::constants::*;
 use alloc::vec::Vec;
 use axaddrspace::GuestPhysAddr;
-use axvirtio_common::memory::{write_guest_obj, read_guest_buffer, write_guest_buffer};
+use axvirtio_common::memory::GuestMemoryAccess;
 use log::{debug, error, trace, warn};
 
 /// Block request types
@@ -47,24 +47,34 @@ pub enum DataSource {
     },
 }
 
+/// Block request processing result
+#[derive(Debug)]
+pub struct BlockRequestResult {
+    /// Request status
+    pub status: u8,
+}
+
 /// Unified block request structure
 #[derive(Debug)]
-pub struct BlockRequest {
+pub struct BlockRequest<M: GuestMemoryAccess> {
     /// Request type
     pub request_type: BlockRequestType,
     /// Starting sector
     pub sector: u64,
     /// Data source (buffer or guest memory)
     pub data_source: DataSource,
+    /// Guest memory accessor
+    memory: M,
 }
 
-impl BlockRequest {
+impl<M: GuestMemoryAccess> BlockRequest<M> {
     /// Create a new block request with guest memory buffers
     pub fn new_virtio(
         request_type: BlockRequestType,
         sector: u64,
         buffers: Vec<(GuestPhysAddr, usize, bool)>,
         status_addr: GuestPhysAddr,
+        memory: M,
     ) -> Self {
         Self {
             request_type,
@@ -73,6 +83,7 @@ impl BlockRequest {
                 buffers,
                 status_addr,
             },
+            memory,
         }
     }
 
@@ -91,8 +102,8 @@ impl BlockRequest {
                 status_addr,
             } => {
                 let status = self.execute_guest_memory_request(backend, buffers, *status_addr);
-                // Write status to guest memory using safe interface
-                if let Err(_) = write_guest_obj(*status_addr, status) {
+                // Write status to guest memory using injected memory accessor
+                if let Err(_) = self.memory.write_obj(*status_addr, status) {
                     error!("Failed to write status to guest memory");
                 }
                 BlockRequestResult { status }
@@ -127,12 +138,9 @@ impl BlockRequest {
         match backend.read(self.sector, &mut buffer) {
             Ok(bytes_read) => {
                 trace!(
-                    "Read {} bytes from backend at sector {}",
-                    bytes_read,
+                    "Read {bytes_read} bytes from backend at sector {0}",
                     self.sector
                 );
-
-                trace!("Read data: {:?}", buffer);
 
                 // Copy data to guest memory buffers
                 let mut buffer_offset = 0;
@@ -148,8 +156,11 @@ impl BlockRequest {
                         return VIRTIO_BLK_S_IOERR;
                     }
 
-                    // Write data to guest memory using safe interface
-                    if let Err(e) = write_guest_buffer(*guest_addr, &buffer[buffer_offset..end_offset]) {
+                    // Write data to guest memory using injected memory accessor
+                    if let Err(e) = self
+                        .memory
+                        .write_buffer(*guest_addr, &buffer[buffer_offset..end_offset])
+                    {
                         error!("Failed to write data to guest memory: {:?}", e);
                         return VIRTIO_BLK_S_IOERR;
                     }
@@ -189,8 +200,11 @@ impl BlockRequest {
                 return VIRTIO_BLK_S_IOERR;
             }
 
-            // Read data from guest memory using safe interface
-            if let Err(e) = read_guest_buffer(*guest_addr, &mut buffer[buffer_offset..end_offset]) {
+            // Read data from guest memory using injected memory accessor
+            if let Err(e) = self
+                .memory
+                .read_buffer(*guest_addr, &mut buffer[buffer_offset..end_offset])
+            {
                 error!("Failed to read data from guest memory: {:?}", e);
                 return VIRTIO_BLK_S_IOERR;
             }
@@ -229,11 +243,4 @@ impl BlockRequest {
             }
         }
     }
-}
-
-/// Block request processing result
-#[derive(Debug)]
-pub struct BlockRequestResult {
-    /// Request status
-    pub status: u8,
 }

@@ -9,8 +9,7 @@ pub use used::{UsedRing, VirtqUsed, VirtqUsedElem};
 
 use crate::{
     error::{VirtioError, VirtioResult},
-    memory::{read_guest_obj, write_guest_obj},
-    VirtioDeviceType,
+    GuestMemoryAccess, VirtioDeviceType,
 };
 use alloc::vec::Vec;
 use axaddrspace::GuestPhysAddr;
@@ -31,10 +30,13 @@ impl VirtioBlockHeader {
     pub const SIZE: u32 = 16; // type (4) + ioprio (4) + sector (8)
 
     /// Read VirtIO block header from guest memory
-    pub fn read_from_guest(addr: GuestPhysAddr) -> VirtioResult<Self> {
-        let request_type: u32 = read_guest_obj(addr)?;
-        let ioprio: u32 = read_guest_obj(addr + 4)?;
-        let sector: u64 = read_guest_obj(addr + 8)?;
+    pub fn read_from_guest(
+        addr: GuestPhysAddr,
+        memory: &impl GuestMemoryAccess,
+    ) -> VirtioResult<Self> {
+        let request_type: u32 = memory.read_obj(addr)?;
+        let ioprio: u32 = memory.read_obj(addr + 4)?;
+        let sector: u64 = memory.read_obj(addr + 8)?;
 
         Ok(Self {
             request_type,
@@ -46,13 +48,21 @@ impl VirtioBlockHeader {
 
 /// VirtIO queue implementation
 #[derive(Debug, Clone)]
-pub struct VirtioQueue {
+pub struct VirtioQueue<M: GuestMemoryAccess> {
     /// Queue index
     pub index: u16,
+    /// Queue size
+    pub size: u16,
+    /// Descriptor table
+    desc_table: Option<DescriptorTable<M>>,
+    /// Available ring
+    avail_ring: Option<AvailableRing<M>>,
+    /// Used ring
+    used_ring: Option<UsedRing<M>>,
+    /// Guest memory accessor
+    memory: M,
     /// Maximum queue size
     pub max_size: u16,
-    /// Current queue size
-    pub size: u16,
     /// Queue ready flag
     pub ready: bool,
     /// Descriptor table address (guest physical)
@@ -67,21 +77,19 @@ pub struct VirtioQueue {
     next_used: u16,
     /// Event index enabled
     pub event_idx_enabled: bool,
-    /// Descriptor table management
-    pub desc_table: Option<DescriptorTable>,
-    /// Available ring management
-    pub avail_ring: Option<AvailableRing>,
-    /// Used ring management
-    pub used_ring: Option<UsedRing>,
 }
 
-impl VirtioQueue {
+impl<M: GuestMemoryAccess + Clone> VirtioQueue<M> {
     /// Create a new VirtIO queue
-    pub fn new(index: u16, max_size: u16) -> Self {
+    pub fn new(index: u16, size: u16, memory: M) -> Self {
         Self {
             index,
-            max_size,
-            size: max_size,
+            size,
+            desc_table: None,
+            avail_ring: None,
+            used_ring: None,
+            memory,
+            max_size: size,
             ready: false,
             desc_table_addr: GuestPhysAddr::from(0),
             avail_ring_addr: GuestPhysAddr::from(0),
@@ -89,9 +97,6 @@ impl VirtioQueue {
             next_avail: 0,
             next_used: 0,
             event_idx_enabled: false,
-            desc_table: None,
-            avail_ring: None,
-            used_ring: None,
         }
     }
 
@@ -108,7 +113,7 @@ impl VirtioQueue {
     pub fn set_desc_table_addr(&mut self, addr: GuestPhysAddr) -> VirtioResult<()> {
         self.desc_table_addr = addr;
         if addr.as_usize() != 0 {
-            self.desc_table = Some(DescriptorTable::new(addr, self.size));
+            self.desc_table = Some(DescriptorTable::new(addr, self.size, self.memory.clone()));
         }
         Ok(())
     }
@@ -117,7 +122,7 @@ impl VirtioQueue {
     pub fn set_avail_ring_addr(&mut self, addr: GuestPhysAddr) -> VirtioResult<()> {
         self.avail_ring_addr = addr;
         if addr.as_usize() != 0 {
-            self.avail_ring = Some(AvailableRing::new(addr, self.size));
+            self.avail_ring = Some(AvailableRing::new(addr, self.size, self.memory.clone()));
         }
         Ok(())
     }
@@ -126,7 +131,7 @@ impl VirtioQueue {
     pub fn set_used_ring_addr(&mut self, addr: GuestPhysAddr) -> VirtioResult<()> {
         self.used_ring_addr = addr;
         if addr.as_usize() != 0 {
-            self.used_ring = Some(UsedRing::new(addr, self.size));
+            self.used_ring = Some(UsedRing::new(addr, self.size, self.memory.clone()));
         }
         Ok(())
     }
@@ -196,22 +201,22 @@ impl VirtioQueue {
     }
 
     /// Get the used ring reference
-    pub fn get_used_ring(&self) -> Option<&UsedRing> {
+    pub fn get_used_ring(&self) -> Option<&UsedRing<M>> {
         self.used_ring.as_ref()
     }
 
     /// Get the used ring mutable reference
-    pub fn get_used_ring_mut(&mut self) -> Option<&mut UsedRing> {
+    pub fn get_used_ring_mut(&mut self) -> Option<&mut UsedRing<M>> {
         self.used_ring.as_mut()
     }
 
     /// Get the available ring reference
-    pub fn get_avail_ring(&self) -> Option<&AvailableRing> {
+    pub fn get_avail_ring(&self) -> Option<&AvailableRing<M>> {
         self.avail_ring.as_ref()
     }
 
     /// Get the descriptor table reference
-    pub fn get_desc_table(&self) -> Option<&DescriptorTable> {
+    pub fn get_desc_table(&self) -> Option<&DescriptorTable<M>> {
         self.desc_table.as_ref()
     }
 
@@ -286,13 +291,8 @@ impl VirtioQueue {
             // Read the header from guest memory
             let header_addr = header_desc.guest_addr();
 
-            trace!(
-                "Reading VirtIO block header from guest address 0x{:x}",
-                header_addr.as_usize()
-            );
-
             // Use the structured header reading
-            let header = VirtioBlockHeader::read_from_guest(header_addr)?;
+            let header = VirtioBlockHeader::read_from_guest(header_addr, &self.memory)?;
 
             trace!(
                 "Parsed VirtIO block header: type={}, sector={}",
@@ -353,7 +353,7 @@ impl VirtioQueue {
         );
 
         // Write the status byte to guest memory using the new memory access interface
-        write_guest_obj(status_addr_guest, status)?;
+        self.memory.write_obj(status_addr_guest, status)?;
 
         Ok(())
     }

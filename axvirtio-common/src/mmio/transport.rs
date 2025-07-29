@@ -1,7 +1,7 @@
-use axaddrspace::{GuestPhysAddr, device::AccessWidth};
+use axaddrspace::{device::AccessWidth, GuestPhysAddr};
 use axerrno::AxResult;
 
-use crate::error::VirtioError;
+use crate::{error::VirtioError, VIRTIO_MMIO_CONFIG};
 
 /// MMIO transport layer utilities
 pub struct MmioTransport;
@@ -22,11 +22,7 @@ impl MmioTransport {
     }
 
     /// Check if address is within device range
-    pub fn is_address_in_range(
-        addr: GuestPhysAddr,
-        base_addr: GuestPhysAddr,
-        size: usize,
-    ) -> bool {
+    pub fn is_address_in_range(addr: GuestPhysAddr, base_addr: GuestPhysAddr, size: usize) -> bool {
         let offset = addr.as_usize().saturating_sub(base_addr.as_usize());
         offset < size
     }
@@ -45,7 +41,7 @@ impl MmioTransport {
 
         // Validate access width for configuration registers
         let offset = Self::calculate_offset(addr, base_addr);
-        if offset < 0x100 {
+        if offset < VIRTIO_MMIO_CONFIG {
             // Configuration registers require 32-bit access
             Self::validate_access_width(width)?;
         }
@@ -67,7 +63,7 @@ impl MmioTransport {
 
         // Validate access width for configuration registers
         let offset = Self::calculate_offset(addr, base_addr);
-        if offset < 0x100 {
+        if offset < VIRTIO_MMIO_CONFIG {
             // Configuration registers require 32-bit access
             Self::validate_access_width(width)?;
         }
@@ -92,14 +88,10 @@ impl MmioTransport {
         match width {
             AccessWidth::Byte => data[0] as usize,
             AccessWidth::Word => u16::from_le_bytes([data[0], data[1]]) as usize,
-            AccessWidth::Dword => {
-                u32::from_le_bytes([data[0], data[1], data[2], data[3]]) as usize
-            }
-            AccessWidth::Qword => {
-                u64::from_le_bytes([
-                    data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
-                ]) as usize
-            }
+            AccessWidth::Dword => u32::from_le_bytes([data[0], data[1], data[2], data[3]]) as usize,
+            AccessWidth::Qword => u64::from_le_bytes([
+                data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
+            ]) as usize,
         }
     }
 }

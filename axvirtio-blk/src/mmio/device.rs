@@ -1,4 +1,3 @@
-use alloc::boxed::Box;
 use alloc::vec::Vec;
 use axaddrspace::{device::AccessWidth, GuestPhysAddr};
 use axerrno::AxResult;
@@ -6,15 +5,17 @@ use axerrno::AxResult;
 use log::{error, info, trace, warn};
 use spin::Mutex;
 
-use crate::backend::{create_default_backend, BlockBackend};
+use crate::backend::BlockBackend;
 use crate::block::config::VirtioBlockConfig;
 use crate::block::request::BlockRequestType;
 use crate::block::BlockRequest;
 use crate::constants::*;
-use axvirtio_common::{MmioTransport, VirtioConfig, VirtioError, VirtioQueue, VirtioResult};
+use axvirtio_common::{
+    GuestMemoryAccess, MmioTransport, VirtioConfig, VirtioError, VirtioQueue, VirtioResult,
+};
 
 /// VirtIO MMIO device state
-pub struct VirtioMmioDevice {
+pub struct VirtioMmioDevice<B: BlockBackend, M: GuestMemoryAccess + Clone> {
     /// Base IPA address
     pub(crate) base_ipa: GuestPhysAddr,
     /// MMIO region length
@@ -34,30 +35,30 @@ pub struct VirtioMmioDevice {
     /// Current queue selector
     queue_sel: Mutex<u16>,
     /// VirtIO queues
-    queues: Mutex<Vec<VirtioQueue>>,
+    queues: Mutex<Vec<VirtioQueue<M>>>,
     /// Interrupt status
     interrupt_status: Mutex<u32>,
     /// Configuration generation
     config_generation: Mutex<u32>,
     /// Block backend
-    backend: Box<dyn BlockBackend>,
+    backend: B,
+    /// Guest memory accessor
+    memory: M,
 }
 
-impl VirtioMmioDevice {
-    /// Create a new VirtIO MMIO device with device index
-    pub fn new(base_ipa: usize, device_index: usize, length: usize) -> VirtioResult<Self> {
-        let config = VirtioConfig::new_block_device(base_ipa, device_index);
+impl<B: BlockBackend, M: GuestMemoryAccess + Clone> VirtioMmioDevice<B, M> {
+    /// Create a new VirtIO MMIO device
+    /// # Arguments
+    /// * `base_ipa` - Base IPA address for the device
+    /// * `length` - MMIO region length
+    /// * `backend` - Block backend implementation
+    /// * `memory` - Guest memory accessor with address translation
+    pub fn new(base_ipa: usize, length: usize, backend: B, memory: M) -> VirtioResult<Self> {
+        let config = VirtioConfig::new_block_device(base_ipa);
         let mut queues = Vec::new();
 
         // Create default queue
-        queues.push(VirtioQueue::new(0, config.max_queue_size));
-
-        // Create backend
-        let backend = if let Ok(backend) = create_default_backend(device_index) {
-            backend
-        } else {
-            panic!("Create backend error!");
-        };
+        queues.push(VirtioQueue::new(0, config.max_queue_size, memory.clone()));
 
         Ok(Self {
             base_ipa: GuestPhysAddr::from(base_ipa),
@@ -73,12 +74,18 @@ impl VirtioMmioDevice {
             interrupt_status: Mutex::new(0),
             config_generation: Mutex::new(0),
             backend,
+            memory,
         })
+    }
+
+    /// Get guest memory accessor
+    pub fn memory(&self) -> &M {
+        &self.memory
     }
 
     /// Check if device index is valid
     pub fn is_enabled(&self) -> bool {
-        self.config.is_valid_device_index()
+        true
     }
 
     /// Get device status
@@ -303,12 +310,6 @@ impl VirtioMmioDevice {
 
     /// Handle queue notification
     fn handle_queue_notify(&self, queue_index: u16) {
-        trace!(
-            "Queue {} notified for device {}",
-            queue_index,
-            self.config.device_index
-        );
-
         // Check if device is ready
         if !self.is_device_ready() {
             warn!("Device not ready, ignoring queue notification");
@@ -345,7 +346,7 @@ impl VirtioMmioDevice {
     }
 
     /// Process requests in the queue
-    fn process_queue_requests(&self, queue: &VirtioQueue) {
+    fn process_queue_requests(&self, queue: &VirtioQueue<M>) {
         // Read the available ring index to see if there are new requests
         let avail_idx = match queue.read_avail_idx() {
             Ok(idx) => idx,
@@ -421,7 +422,7 @@ impl VirtioMmioDevice {
     }
 
     /// Process a descriptor chain
-    fn process_descriptor_chain(&self, queue: &VirtioQueue, head_index: u16) -> AxResult<()> {
+    fn process_descriptor_chain(&self, queue: &VirtioQueue<M>, head_index: u16) -> AxResult<()> {
         // Parse the descriptor chain to extract the request
         let request = self.parse_virtio_request(queue, head_index)?;
 
@@ -435,7 +436,11 @@ impl VirtioMmioDevice {
     }
 
     /// Parse VirtIO block request from descriptor chain
-    fn parse_virtio_request(&self, queue: &VirtioQueue, head_index: u16) -> AxResult<BlockRequest> {
+    fn parse_virtio_request(
+        &self,
+        queue: &VirtioQueue<M>,
+        head_index: u16,
+    ) -> AxResult<BlockRequest<M>> {
         // Validate the descriptor chain
         match queue.validate_virtio_block_chain(head_index, MIN_DESCRIPTOR_CHAIN_LENGTH) {
             Ok(true) => {}
@@ -478,27 +483,27 @@ impl VirtioMmioDevice {
             }
         };
 
-        // Create request object
+        // Create request object with memory accessor
         let request = BlockRequest::new_virtio(
             BlockRequestType::from(header.request_type),
             header.sector,
             buffers,
             status_addr,
+            self.memory.clone(), // 传入内存访问器
         );
 
         Ok(request)
     }
 
     /// Execute a block request
-    fn execute_block_request(&self, request: &BlockRequest) -> AxResult<u8> {
+    fn execute_block_request(&self, request: &BlockRequest<M>) -> AxResult<u8> {
         // Execute the request using the backend
-        let result = request.execute(self.backend.as_ref());
-
+        let result = request.execute(&self.backend);
         Ok(result.status)
     }
 
     /// Add a used buffer to the used ring
-    fn add_used_buffer(&self, queue: &VirtioQueue, desc_index: u16, len: u32, status: u8) {
+    fn add_used_buffer(&self, queue: &VirtioQueue<M>, desc_index: u16, len: u32, status: u8) {
         trace!(
             "Completing request: desc_index={}, len={}, status={}",
             desc_index,
@@ -604,7 +609,7 @@ impl VirtioMmioDevice {
     }
 
     /// Get queue by index
-    pub fn get_queue(&self, index: u16) -> Option<VirtioQueue> {
+    pub fn get_queue(&self, index: u16) -> Option<VirtioQueue<M>> {
         let queues = self.queues.lock();
         queues.get(index as usize).cloned()
     }

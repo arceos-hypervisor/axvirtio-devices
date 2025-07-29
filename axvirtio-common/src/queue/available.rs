@@ -1,6 +1,5 @@
-use crate::constants::*;
 use crate::error::{VirtioError, VirtioResult};
-use crate::memory::{read_guest_obj, write_guest_obj};
+use crate::{constants::*, GuestMemoryAccess};
 use axaddrspace::GuestPhysAddr;
 
 /// VirtIO available ring structure
@@ -41,22 +40,25 @@ impl VirtqAvail {
 
 /// Available ring management
 #[derive(Debug, Clone)]
-pub struct AvailableRing {
+pub struct AvailableRing<M: GuestMemoryAccess> {
     /// Base address of the available ring
     pub base_addr: GuestPhysAddr,
     /// Queue size
     pub size: u16,
     /// Last seen available index
     pub last_avail_idx: u16,
+    /// Guest memory accessor
+    memory: M,
 }
 
-impl AvailableRing {
+impl<M: GuestMemoryAccess> AvailableRing<M> {
     /// Create a new available ring
-    pub fn new(base_addr: GuestPhysAddr, size: u16) -> Self {
+    pub fn new(base_addr: GuestPhysAddr, size: u16, memory: M) -> Self {
         Self {
             base_addr,
             size,
             last_avail_idx: 0,
+            memory,
         }
     }
 
@@ -112,7 +114,7 @@ impl AvailableRing {
             return Err(VirtioError::QueueNotReady);
         }
 
-        read_guest_obj(self.base_addr)
+        self.memory.read_obj(self.base_addr)
     }
 
     /// Write the available ring header
@@ -121,7 +123,7 @@ impl AvailableRing {
             return Err(VirtioError::QueueNotReady);
         }
 
-        write_guest_obj(self.base_addr, *header)
+        self.memory.write_obj(self.base_addr, header)
     }
 
     /// Read the current available index from guest memory
@@ -132,7 +134,7 @@ impl AvailableRing {
 
         // Read the idx field from the header (offset 2 bytes for flags)
         let idx_addr = self.base_addr + 2;
-        read_guest_obj(idx_addr)
+        self.memory.read_obj(idx_addr)
     }
 
     /// Get the available index for external access
@@ -150,7 +152,7 @@ impl AvailableRing {
             .ring_entry_addr(ring_index % self.size)
             .ok_or(VirtioError::InvalidQueue)?;
 
-        read_guest_obj(entry_addr)
+        self.memory.read_obj(entry_addr)
     }
 
     /// Write a descriptor index to the available ring
@@ -163,7 +165,7 @@ impl AvailableRing {
             .ring_entry_addr(ring_index % self.size)
             .ok_or(VirtioError::InvalidQueue)?;
 
-        write_guest_obj(entry_addr, desc_index)?;
+        self.memory.write_obj(entry_addr, desc_index)?;
 
         Ok(())
     }
@@ -195,7 +197,7 @@ impl AvailableRing {
         }
 
         let event_addr = self.used_event_addr();
-        read_guest_obj(event_addr)
+        self.memory.read_obj(event_addr)
     }
 
     /// Write the used event field (for event_idx feature)
@@ -205,6 +207,6 @@ impl AvailableRing {
         }
 
         let event_addr = self.used_event_addr();
-        write_guest_obj(event_addr, event)
+        self.memory.write_obj(event_addr, event)
     }
 }

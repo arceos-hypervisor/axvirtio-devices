@@ -1,6 +1,6 @@
 use crate::constants::*;
 use crate::error::{VirtioError, VirtioResult};
-use crate::memory::{write_guest_obj, read_guest_obj};
+use crate::memory::GuestMemoryAccess;
 use axaddrspace::GuestPhysAddr;
 
 /// VirtIO used ring element
@@ -58,22 +58,25 @@ impl VirtqUsed {
 
 /// Used ring management
 #[derive(Debug, Clone)]
-pub struct UsedRing {
+pub struct UsedRing<M: GuestMemoryAccess> {
     /// Base address of the used ring
     pub base_addr: GuestPhysAddr,
     /// Queue size
     pub size: u16,
     /// Current used index
     pub used_idx: u16,
+    /// Guest memory accessor
+    memory: M,
 }
 
-impl UsedRing {
+impl<M: GuestMemoryAccess> UsedRing<M> {
     /// Create a new used ring
-    pub fn new(base_addr: GuestPhysAddr, size: u16) -> Self {
+    pub fn new(base_addr: GuestPhysAddr, size: u16, memory: M) -> Self {
         Self {
             base_addr,
             size,
             used_idx: 0,
+            memory,
         }
     }
 
@@ -132,8 +135,8 @@ impl UsedRing {
         // Create the used element
         let used_elem = VirtqUsedElem::new(id, len);
 
-        // Write the used element to guest memory using safe interface
-        write_guest_obj(elem_addr, used_elem)?;
+        // Write the used element to guest memory using injected memory accessor
+        self.memory.write_obj(elem_addr, used_elem)?;
 
         // Update the used index
         self.used_idx = self.used_idx.wrapping_add(1);
@@ -152,7 +155,7 @@ impl UsedRing {
 
         // Write the used index to the header (offset 2 bytes for flags)
         let idx_addr = self.base_addr + 2;
-        write_guest_obj(idx_addr, self.used_idx)?;
+        self.memory.write_obj(idx_addr, self.used_idx)?;
 
         Ok(())
     }
@@ -163,7 +166,7 @@ impl UsedRing {
             return Err(VirtioError::QueueNotReady);
         }
 
-        read_guest_obj(self.base_addr)
+        self.memory.read_obj(self.base_addr)
     }
 
     /// Write the used ring header
@@ -172,7 +175,7 @@ impl UsedRing {
             return Err(VirtioError::QueueNotReady);
         }
 
-        write_guest_obj(self.base_addr, *header)
+        self.memory.write_obj(self.base_addr, *header)
     }
 
     /// Get the current used index

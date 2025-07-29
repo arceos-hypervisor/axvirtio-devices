@@ -19,15 +19,19 @@ pub struct VirtioConfig {
     pub num_queues: u16,
     /// Device features supported
     pub device_features: u64,
-    /// Device index (0-31, determines MMIO address offset)
-    pub device_index: usize,
     /// Device Type
     pub device_type: VirtioDeviceType,
 }
 
 impl VirtioConfig {
     /// Create a new VirtIO configuration with device index and device ID
-    pub fn new(base_ipa:usize, device_index: usize, device_id: u32, device_features: u64, num_queues: u16, device_type: VirtioDeviceType) -> Self {
+    pub fn new(
+        base_ipa: usize,
+        device_id: u32,
+        device_features: u64,
+        num_queues: u16,
+        device_type: VirtioDeviceType,
+    ) -> Self {
         Self {
             base_addr: GuestPhysAddr::from(base_ipa),
             mmio_size: VIRTIO_MMIO_DEVICE_SIZE,
@@ -37,60 +41,26 @@ impl VirtioConfig {
             max_queue_size: DEFAULT_QUEUE_SIZE,
             num_queues,
             device_features,
-            device_index,
             device_type,
         }
     }
 
     /// Create a new block device configuration
-    pub fn new_block_device(base_ipa:usize, device_index: usize) -> Self {
+    pub fn new_block_device(base_ipa: usize) -> Self {
         // Block device specific features
         let features = VIRTIO_F_VERSION_1 | VIRTIO_F_RING_EVENT_IDX;
-        Self::new(base_ipa,device_index, VIRTIO_DEVICE_ID_BLOCK, features, 1, VirtioDeviceType::Block)
-    }
-
-    /// Create a new network device configuration
-    pub fn new_network_device(base_ipa:usize, device_index: usize) -> Self {
-        // Network device specific features
-        let features = VIRTIO_F_VERSION_1 | VIRTIO_F_RING_EVENT_IDX;
-        Self::new(base_ipa, device_index, VIRTIO_DEVICE_ID_NET, features, 2, VirtioDeviceType::Network) // RX and TX queues
-    }
-
-    /// Create a new console device configuration
-    pub fn new_console_device(base_ipa:usize, device_index: usize) -> Self {
-        // Console device specific features
-        let features = VIRTIO_F_VERSION_1;
-        Self::new(base_ipa, device_index, VIRTIO_DEVICE_ID_CONSOLE, features, 2, VirtioDeviceType::Console) // Input and output queues
-    }
-
-    /// Check if device index is valid
-    pub fn is_valid_device_index(&self) -> bool {
-        self.device_index < VIRTIO_MAX_DEVICES
-    }
-
-    /// Get the device-specific file path for this device
-    pub fn get_device_path(&self, prefix: &str, suffix: &str) -> alloc::string::String {
-        alloc::format!("/guest/{}_{}.{}", prefix, self.device_index, suffix)
-    }
-
-    /// Get the disk file path for block devices
-    pub fn get_disk_path(&self) -> alloc::string::String {
-        self.get_device_path("vm", "img")
-    }
-
-    /// Get the network interface name for network devices
-    pub fn get_network_interface(&self) -> alloc::string::String {
-        alloc::format!("tap{}", self.device_index)
-    }
-
-    /// Get the console device path for console devices
-    pub fn get_console_path(&self) -> alloc::string::String {
-        self.get_device_path("console", "sock")
+        Self::new(
+            base_ipa,
+            VIRTIO_DEVICE_ID_BLOCK,
+            features,
+            1,
+            VirtioDeviceType::Block,
+        )
     }
 }
 
 impl Default for VirtioConfig {
     fn default() -> Self {
-        Self::new_block_device(VIRTIO_MMIO_BASE,0)
+        Self::new_block_device(VIRTIO_MMIO_BASE)
     }
 }
