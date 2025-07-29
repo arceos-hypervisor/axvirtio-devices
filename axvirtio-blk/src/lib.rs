@@ -14,7 +14,7 @@
 //! ## Usage
 //!
 //! ```rust,no_run
-//! use axvirtio_blk::{VirtioMmioDevice, BlockBackend, VirtioResult};
+//! use axvirtio_blk::{VirtioMmioBlockDevice, BlockBackend, VirtioResult};
 //! use axvirtio_common::AddressTranslator;
 //! use axaddrspace::GuestPhysAddr;
 //! use memory_addr::PhysAddr;
@@ -44,7 +44,7 @@
 //! // Create and use the VirtIO block device
 //! let backend = MyBlockBackend;
 //! let translator = MyTranslator;
-//! let device = VirtioMmioDevice::new(0x0a000000, 0x200, backend, translator);
+//! let device = VirtioMmioBlockDevice::new(0x0a000000, 0x200, backend, translator);
 //! ```
 
 #![no_std]
