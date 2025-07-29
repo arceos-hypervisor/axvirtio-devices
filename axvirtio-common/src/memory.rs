@@ -44,6 +44,7 @@ pub struct GuestMemoryAccessor<T> {
 }
 
 impl<T: AddressTranslator> GuestMemoryAccessor<T> {
+    /// Create a new guest memory accessor
     pub fn new(translator: T) -> Self {
         Self { translator }
     }

@@ -21,10 +21,6 @@ impl VirtqUsedElem {
 }
 
 /// VirtIO used ring structure
-///
-/// This is followed by:
-/// - ring[queue_size]: VirtqUsedElem array
-/// - avail_event: u16 (if event_idx feature is enabled)
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct VirtqUsed {

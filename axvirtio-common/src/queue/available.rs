@@ -3,10 +3,6 @@ use crate::{constants::*, GuestMemoryAccess};
 use axaddrspace::GuestPhysAddr;
 
 /// VirtIO available ring structure
-///
-/// This is followed by:
-/// - ring[queue_size]: u16 array of descriptor indices
-/// - used_event: u16 (if event_idx feature is enabled)
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct VirtqAvail {
@@ -14,7 +10,6 @@ pub struct VirtqAvail {
     pub flags: u16,
     /// Index of the next available descriptor
     pub idx: u16,
-    // Ring of available descriptor indices (variable length)
 }
 
 impl VirtqAvail {
