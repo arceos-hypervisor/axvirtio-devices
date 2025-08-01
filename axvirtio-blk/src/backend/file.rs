@@ -11,6 +11,74 @@ use std::io::{Seek, SeekFrom, Read, Write};
 #[cfg(feature = "file-backend")]
 use spin::Mutex;
 
+/// Cache structure for single sector caching with write-back support
+#[cfg(feature = "file-backend")]
+struct SectorCache {
+    /// Cached data buffer (size = SECTOR_SIZE_U64)
+    data: [u8; SECTOR_SIZE as usize],
+    /// Sector number that is cached
+    sector_num: u64,
+    /// Whether the cache is valid
+    valid: bool,
+    /// Whether the cached data is dirty (needs to be written to disk)
+    dirty: bool,
+}
+
+#[cfg(feature = "file-backend")]
+impl SectorCache {
+    fn new() -> Self {
+        Self {
+            data: [0; SECTOR_SIZE as usize],
+            sector_num: 0,
+            valid: false,
+            dirty: false,
+        }
+    }
+
+    fn invalidate(&mut self) {
+        self.valid = false;
+        self.dirty = false;
+    }
+
+    fn is_hit(&self, sector: u64) -> bool {
+        self.valid && self.sector_num == sector
+    }
+
+    fn is_dirty(&self) -> bool {
+        self.dirty
+    }
+
+    fn update_read(&mut self, sector: u64, data: &[u8]) {
+        if data.len() >= SECTOR_SIZE as usize {
+            self.data[..SECTOR_SIZE as usize].copy_from_slice(&data[..SECTOR_SIZE as usize]);
+            self.sector_num = sector;
+            self.valid = true;
+            self.dirty = false; // Read data is clean
+        }
+    }
+
+    fn update_write(&mut self, sector: u64, data: &[u8]) {
+        if data.len() >= SECTOR_SIZE as usize {
+            self.data[..SECTOR_SIZE as usize].copy_from_slice(&data[..SECTOR_SIZE as usize]);
+            self.sector_num = sector;
+            self.valid = true;
+            self.dirty = true; // Write data is dirty
+        }
+    }
+
+    fn get_data(&self) -> &[u8] {
+        &self.data
+    }
+
+    fn mark_clean(&mut self) {
+        self.dirty = false;
+    }
+
+    fn get_sector(&self) -> u64 {
+        self.sector_num
+    }
+}
+
 /// File-based block device backend
 ///
 /// This backend stores data in a file on the host filesystem.
@@ -25,6 +93,8 @@ pub struct FileBackend {
     read_file: Mutex<Option<File>>,
     /// Dedicated file handle for write operations (None for read-only devices)
     write_file: Mutex<Option<File>>,
+    /// Read/Write cache for single sector with write-back support
+    cache: Mutex<SectorCache>,
 }
 
 /// Placeholder FileBackend for when file-backend feature is disabled
@@ -67,6 +137,7 @@ impl FileBackend {
             read_only,
             read_file: Mutex::new(read_file),
             write_file: Mutex::new(write_file),
+            cache: Mutex::new(SectorCache::new()),
         })
     }
 
@@ -87,6 +158,29 @@ impl FileBackend {
 
         Ok(())
     }
+
+    /// Flush dirty cache to disk
+    fn flush_cache_if_dirty(&self) -> VirtioResult<()> {
+        let mut cache = self.cache.lock();
+        
+        if cache.valid && cache.is_dirty() {
+            // Need to write dirty cache to disk
+            let offset = cache.get_sector() * SECTOR_SIZE_U64;
+            
+            let mut write_file_guard = self.write_file.lock();
+            let write_file = write_file_guard.as_mut().ok_or(VirtioError::BackendError)?;
+
+            // Seek to the offset and write cached data
+            if let Err(_) = write_file.seek(SeekFrom::Start(offset)) {
+                return Err(VirtioError::BackendError);
+            }
+
+            write_file.write_all(cache.get_data()).map_err(|_| VirtioError::BackendError)?;
+            cache.mark_clean();
+        }
+
+        Ok(())
+    }
 }
 
 #[cfg(not(feature = "file-backend"))]
@@ -101,10 +195,39 @@ impl BlockBackend for FileBackend {
     fn read(&self, sector: u64, buffer: &mut [u8]) -> VirtioResult<usize> {
         self.validate_access(sector, buffer.len())?;
 
-        // Calculate byte offset
-        let offset = sector * SECTOR_SIZE_U64;
+        // For single sector reads, try cache first
+        if buffer.len() == SECTOR_SIZE as usize {
+            let mut cache = self.cache.lock();
+            
+            if cache.is_hit(sector) {
+                // Cache hit
+                if cache.is_dirty() {
+                    // If cache is dirty, we need to write it to disk first
+                    // since we're about to read the same sector
+                    drop(cache); // Release lock to avoid deadlock
+                    self.flush_cache_if_dirty()?;
+                    
+                    // Re-acquire lock and get data
+                    let cache = self.cache.lock();
+                    buffer.copy_from_slice(cache.get_data());
+                    return Ok(SECTOR_SIZE as usize);
+                } else {
+                    // Cache is clean, just return cached data
+                    buffer.copy_from_slice(cache.get_data());
+                    return Ok(SECTOR_SIZE as usize);
+                }
+            } else {
+                // Cache miss - check if we need to flush existing dirty cache
+                if cache.valid && cache.is_dirty() {
+                    // Flush existing dirty cache before loading new data
+                    drop(cache); // Release lock to avoid deadlock
+                    self.flush_cache_if_dirty()?;
+                }
+            }
+        }
 
-        // Use the dedicated read file handle
+        // Cache miss or multi-sector read - read from file
+        let offset = sector * SECTOR_SIZE_U64;
         let mut read_file_guard = self.read_file.lock();
         let read_file = read_file_guard.as_mut().ok_or(VirtioError::BackendError)?;
 
@@ -114,6 +237,12 @@ impl BlockBackend for FileBackend {
         }
 
         let bytes_read = read_file.read(buffer).map_err(|_| VirtioError::BackendError)?;
+
+        // Update cache for single sector reads
+        if buffer.len() == SECTOR_SIZE as usize && bytes_read == SECTOR_SIZE as usize {
+            let mut cache = self.cache.lock();
+            cache.update_read(sector, buffer);
+        }
 
         Ok(bytes_read)
     }
@@ -125,10 +254,42 @@ impl BlockBackend for FileBackend {
 
         self.validate_access(sector, buffer.len())?;
 
-        // Calculate byte offset
-        let offset = sector * SECTOR_SIZE_U64;
+        // For single sector writes, use write-back cache
+        if buffer.len() == SECTOR_SIZE as usize {
+            let mut cache = self.cache.lock();
+            
+            // If cache has different sector and is dirty, flush it first
+            if cache.valid && cache.is_dirty() && !cache.is_hit(sector) {
+                drop(cache); // Release lock to avoid deadlock
+                self.flush_cache_if_dirty()?;
+                
+                // Re-acquire lock
+                let mut cache = self.cache.lock();
+                cache.update_write(sector, buffer);
+            } else {
+                // Same sector or cache is clean, just update cache
+                cache.update_write(sector, buffer);
+            }
+            
+            return Ok(SECTOR_SIZE as usize);
+        }
 
-        // Use the dedicated write file handle
+        // Multi-sector write - flush cache if it overlaps and write directly to disk
+        let sectors_written = buffer.len() / SECTOR_SIZE as usize;
+        let mut cache = self.cache.lock();
+        
+        // Check if any written sector overlaps with cached sector
+        for i in 0..sectors_written {
+            let written_sector = sector + i as u64;
+            if cache.is_hit(written_sector) {
+                cache.invalidate();
+                break;
+            }
+        }
+        drop(cache);
+
+        // Write directly to disk for multi-sector writes
+        let offset = sector * SECTOR_SIZE_U64;
         let mut write_file_guard = self.write_file.lock();
         let write_file = write_file_guard.as_mut().ok_or(VirtioError::BackendError)?;
 
@@ -143,12 +304,15 @@ impl BlockBackend for FileBackend {
     }
 
     fn flush(&self) -> VirtioResult<()> {
-        // If we have a write file handle, use it for flushing
+        // First flush any dirty cache
+        self.flush_cache_if_dirty()?;
+
+        // Then flush the file handle
         let mut write_file_guard = self.write_file.lock();
         if let Some(write_file) = write_file_guard.as_mut() {
             write_file.flush().map_err(|_| VirtioError::BackendError)?;
         }
-        // If no write file exists (read-only device), there's nothing to flush
+        
         Ok(())
     }
 }
