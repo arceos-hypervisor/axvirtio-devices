@@ -1,7 +1,6 @@
 use alloc::{sync::Arc, vec::Vec};
 use axaddrspace::{device::AccessWidth, GuestPhysAddr};
 
-use log::{error, info, trace, warn};
 use spin::Mutex;
 
 use crate::backend::BlockBackend;
@@ -52,7 +51,12 @@ impl<B: BlockBackend, T: AddressTranslator + Clone> VirtioMmioBlockDevice<B, T> 
     /// * `length` - MMIO region length
     /// * `backend` - Block backend implementation
     /// * `transtor` - Guest memory accessor with address translation
-    pub fn new(base_ipa: usize, length: usize, backend: B, transtor: T) -> VirtioResult<Self> {
+    pub fn new(
+        base_ipa: GuestPhysAddr,
+        length: usize,
+        backend: B,
+        transtor: T,
+    ) -> VirtioResult<Self> {
         let config = VirtioConfig::new_block_device(base_ipa);
         let mut queues = Vec::new();
         let accessor = Arc::new(GuestMemoryAccessor::new(transtor));
@@ -61,7 +65,7 @@ impl<B: BlockBackend, T: AddressTranslator + Clone> VirtioMmioBlockDevice<B, T> 
         queues.push(VirtioQueue::new(0, config.max_queue_size, accessor.clone()));
 
         Ok(Self {
-            base_ipa: GuestPhysAddr::from(base_ipa),
+            base_ipa,
             length,
             config,
             block_config: VirtioBlockConfig::default(),

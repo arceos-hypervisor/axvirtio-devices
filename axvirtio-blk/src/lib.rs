@@ -52,6 +52,9 @@
 #[macro_use]
 extern crate alloc;
 
+#[macro_use]
+extern crate log;
+
 mod backend;
 mod block;
 mod constants;

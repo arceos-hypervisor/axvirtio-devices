@@ -6,10 +6,9 @@ use axvirtio_common::{
     memory::{AddressTranslator, GuestMemoryAccessor},
     VirtioResult,
 };
-use log::{debug, error, trace, warn};
 
 /// Block request types
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BlockRequestType {
     /// Read request
     Read,
@@ -18,6 +17,7 @@ pub enum BlockRequestType {
     /// Flush request
     Flush,
     /// Unsupported request
+    #[default]
     Unsupported,
 }
 
@@ -54,7 +54,7 @@ pub enum DataSource {
 }
 
 /// Block request processing result
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum BlockRequestResult {
     /// Request completed successfully
     Ok = VIRTIO_BLK_S_OK,
@@ -113,11 +113,7 @@ impl<T: AddressTranslator + Clone> BlockRequest<T> {
             } => {
                 let status = self.execute_guest_memory_request(backend, buffers, *status_addr)?;
                 // Write status to guest memory using injected memory accessor
-                if self
-                    .accessor
-                    .write_obj(*status_addr, status.clone() as u8)
-                    .is_err()
-                {
+                if self.accessor.write_obj(*status_addr, status).is_err() {
                     error!("Failed to write status to guest memory");
                     return Ok(BlockRequestResult::IoError);
                 }

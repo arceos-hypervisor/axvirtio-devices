@@ -26,14 +26,14 @@ pub struct VirtioConfig {
 impl VirtioConfig {
     /// Create a new VirtIO configuration with device index and device ID
     pub fn new(
-        base_ipa: usize,
+        base_addr: GuestPhysAddr,
         device_id: u32,
         device_features: u64,
         num_queues: u16,
         device_type: VirtioDeviceID,
     ) -> Self {
         Self {
-            base_addr: GuestPhysAddr::from(base_ipa),
+            base_addr,
             mmio_size: VIRTIO_MMIO_DEVICE_SIZE,
             total_mmio_size: VIRTIO_MMIO_TOTAL_SIZE,
             device_id,
@@ -46,7 +46,7 @@ impl VirtioConfig {
     }
 
     /// Create a new block device configuration
-    pub fn new_block_device(base_ipa: usize) -> Self {
+    pub fn new_block_device(base_ipa: GuestPhysAddr) -> Self {
         // Block device specific features
         let features = VIRTIO_F_VERSION_1 | VIRTIO_F_RING_EVENT_IDX;
         Self::new(
@@ -61,6 +61,6 @@ impl VirtioConfig {
 
 impl Default for VirtioConfig {
     fn default() -> Self {
-        Self::new_block_device(VIRTIO_MMIO_BASE)
+        Self::new_block_device(GuestPhysAddr::from(VIRTIO_MMIO_BASE))
     }
 }

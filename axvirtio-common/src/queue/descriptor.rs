@@ -10,7 +10,7 @@ use axaddrspace::GuestPhysAddr;
 #[derive(Debug, Clone, Copy)]
 pub struct VirtQueueDesc {
     /// Address (guest-physical)
-    pub addr: u64,
+    pub base_addr: GuestPhysAddr,
     /// Length
     pub len: u32,
     /// Flags
@@ -21,9 +21,9 @@ pub struct VirtQueueDesc {
 
 impl VirtQueueDesc {
     /// Create a new descriptor
-    pub fn new(addr: u64, len: u32, flags: u16, next: u16) -> Self {
+    pub fn new(base_addr: GuestPhysAddr, len: u32, flags: u16, next: u16) -> Self {
         Self {
-            addr,
+            base_addr,
             len,
             flags,
             next,
@@ -47,7 +47,7 @@ impl VirtQueueDesc {
 
     /// Get the guest physical address
     pub fn guest_addr(&self) -> GuestPhysAddr {
-        GuestPhysAddr::from(self.addr as usize)
+        self.base_addr
     }
 
     /// Set the next flag
@@ -231,19 +231,11 @@ impl<T: AddressTranslator + Clone> DescriptorTable<T> {
         let mut buffers = Vec::new();
         if device_type == VirtioDeviceID::Block {
             for desc in &descriptors[1..descriptors.len() - 1] {
-                buffers.push((
-                    GuestPhysAddr::from(desc.addr as usize),
-                    desc.len as usize,
-                    desc.is_write(),
-                ));
+                buffers.push((desc.base_addr, desc.len as usize, desc.is_write()));
             }
         } else {
             for desc in &descriptors {
-                buffers.push((
-                    GuestPhysAddr::from(desc.addr as usize),
-                    desc.len as usize,
-                    desc.is_write(),
-                ));
+                buffers.push((desc.base_addr, desc.len as usize, desc.is_write()));
             }
         }
 
@@ -263,6 +255,6 @@ impl<T: AddressTranslator + Clone> DescriptorTable<T> {
             return Err(VirtioError::InvalidQueue);
         }
 
-        Ok(GuestPhysAddr::from(status_desc.addr as usize))
+        Ok(status_desc.base_addr)
     }
 }

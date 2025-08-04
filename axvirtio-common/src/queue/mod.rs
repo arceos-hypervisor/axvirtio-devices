@@ -108,6 +108,9 @@ impl<T: AddressTranslator + Clone> VirtioQueue<T> {
 
     /// Set descriptor table address
     pub fn set_desc_table_addr(&mut self, addr: GuestPhysAddr) -> VirtioResult<()> {
+        if self.desc_table_addr.as_usize() != 0 {
+            return Err(VirtioError::InvalidConfig);
+        }
         self.desc_table_addr = addr;
         if addr.as_usize() != 0 {
             self.desc_table = Some(DescriptorTable::new(addr, self.size, self.accessor.clone()));
@@ -117,6 +120,9 @@ impl<T: AddressTranslator + Clone> VirtioQueue<T> {
 
     /// Set available ring address
     pub fn set_avail_ring_addr(&mut self, addr: GuestPhysAddr) -> VirtioResult<()> {
+        if self.avail_ring_addr.as_usize() != 0 {
+            return Err(VirtioError::InvalidConfig);
+        }
         self.avail_ring_addr = addr;
         if addr.as_usize() != 0 {
             self.avail_ring = Some(AvailableRing::new(addr, self.size, self.accessor.clone()));
@@ -126,6 +132,9 @@ impl<T: AddressTranslator + Clone> VirtioQueue<T> {
 
     /// Set used ring address
     pub fn set_used_ring_addr(&mut self, addr: GuestPhysAddr) -> VirtioResult<()> {
+        if self.used_ring_addr.as_usize() != 0 {
+            return Err(VirtioError::InvalidConfig);
+        }
         self.used_ring_addr = addr;
         if addr.as_usize() != 0 {
             self.used_ring = Some(UsedRing::new(addr, self.size, self.accessor.clone()));
