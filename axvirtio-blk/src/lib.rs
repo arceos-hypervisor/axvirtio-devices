@@ -44,7 +44,7 @@
 //! // Create and use the VirtIO block device
 //! let backend = MyBlockBackend;
 //! let translator = MyTranslator;
-//! let device = VirtioMmioBlockDevice::new(0x0a000000, 0x200, backend, translator);
+//! let device = VirtioMmioBlockDevice::new(GuestPhysAddr::from(0x0a000000), 0x200, backend, translator);
 //! ```
 
 #![no_std]
