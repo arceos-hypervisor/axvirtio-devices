@@ -112,11 +112,7 @@ impl<T: AddressTranslator + Clone> BlockRequest<T> {
                 status_addr,
             } => {
                 let status = self.execute_guest_memory_request(backend, buffers, *status_addr)?;
-                // Write status to guest memory using injected memory accessor
-                if self.accessor.write_obj(*status_addr, status).is_err() {
-                    error!("Failed to write status to guest memory");
-                    return Ok(BlockRequestResult::IoError);
-                }
+                // Status byte writing is handled by the device layer when completing the request
                 Ok(status)
             }
         }

@@ -58,7 +58,9 @@ impl<B: BlockBackend, T: AddressTranslator + Clone> VirtioMmioBlockDevice<B, T> 
         block_config: VirtioBlockConfig,
         translator: T,
     ) -> VirtioResult<Self> {
-        let config = VirtioConfig::new_block_device(base_ipa);
+        let mut config = VirtioConfig::new_block_device(base_ipa);
+        // Include block-specific feature bits in device features
+        config.device_features |= VIRTIO_BLK_FEATURES;
         let mut queues = Vec::new();
         let accessor = Arc::new(GuestMemoryAccessor::new(translator));
 
@@ -71,7 +73,8 @@ impl<B: BlockBackend, T: AddressTranslator + Clone> VirtioMmioBlockDevice<B, T> 
             config,
             block_config,
             status: Mutex::new(0),
-            driver_features: Mutex::new(VIRTIO_BLK_FEATURES),
+            // Driver-selected features start from 0 and are set by the guest driver
+            driver_features: Mutex::new(0),
             device_features_sel: Mutex::new(0),
             driver_features_sel: Mutex::new(0),
             queue_sel: Mutex::new(0),
@@ -399,8 +402,12 @@ impl<B: BlockBackend, T: AddressTranslator + Clone> VirtioMmioBlockDevice<B, T> 
                 }
                 Err(e) => {
                     error!("Failed to process descriptor chain {}: {:?}", desc_index, e);
-                    // Store error request for later processing
-                    processed_requests.push((desc_index, 0, 1)); // Status = 1 (error)
+                    // Write error status byte to the status buffer immediately
+                    if let Err(se) = queue.write_status_byte(desc_index, VIRTIO_BLK_S_IOERR as u8) {
+                        error!("Failed to write error status byte: {:?}", se);
+                    }
+                    // Store error request for used ring update (len = 0 for error)
+                    processed_requests.push((desc_index, 0u32));
                 }
             }
 
@@ -418,10 +425,18 @@ impl<B: BlockBackend, T: AddressTranslator + Clone> VirtioMmioBlockDevice<B, T> 
                 queue_mut.update_last_avail_idx(current_avail);
 
                 // Handle any error requests
-                for (desc_index, len, _status) in processed_requests {
+                for (desc_index, len) in processed_requests {
                     if let Err(e) = queue_mut.add_used(desc_index, len) {
                         error!("Failed to add used buffer for error request: {:?}", e);
                     }
+                }
+
+                // After processing error requests, check if we should notify the driver
+                let notify = queue_mut.should_notify().unwrap_or(false);
+                if notify {
+                    // Release the lock before triggering interrupt to avoid potential deadlock
+                    drop(queues);
+                    self.trigger_interrupt();
                 }
             }
         }
@@ -578,15 +593,30 @@ impl<B: BlockBackend, T: AddressTranslator + Clone> VirtioMmioBlockDevice<B, T> 
             return;
         }
 
+        // Start from the status provided by the driver, then validate and adjust
+        let mut new_status = status;
+
+        // If driver sets FEATURES_OK, validate negotiated features
+        if (new_status & VIRTIO_STATUS_FEATURES_OK) != 0 {
+            let driver_feats = *self.driver_features.lock();
+            // Driver features must be subset of device features
+            if (driver_feats & !self.config.device_features) != 0 {
+                warn!("Driver features contain unsupported bits: {:#x}", driver_feats & !self.config.device_features);
+                // Clear FEATURES_OK and set FAILED per spec
+                new_status &= !VIRTIO_STATUS_FEATURES_OK;
+                new_status |= VIRTIO_STATUS_FAILED;
+            }
+        }
+
         // Update status
-        *current_status = status;
+        *current_status = new_status;
 
         // Handle status transitions
-        if (status & VIRTIO_STATUS_FAILED) != 0 {
+        if (new_status & VIRTIO_STATUS_FAILED) != 0 {
             warn!("VirtIO device failed");
         }
 
-        if (status & VIRTIO_STATUS_DRIVER_OK) != 0 {
+        if (new_status & VIRTIO_STATUS_DRIVER_OK) != 0 {
             info!("VirtIO device driver OK");
         }
     }

@@ -251,10 +251,66 @@ impl<T: AddressTranslator + Clone> DescriptorTable<T> {
         }
 
         let status_desc = &descriptors[descriptors.len() - 1];
-        if !status_desc.is_write() {
+        // The status descriptor must be writable and at least 1 byte long
+        if !status_desc.is_write() || status_desc.len < 1 {
             return Err(VirtioError::InvalidQueue);
         }
 
         Ok(status_desc.base_addr)
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloc::vec;
+    use crate::memory::GuestMemoryAccessor;
+    use memory_addr::PhysAddr;
+
+    #[derive(Clone)]
+    struct TestTranslator {
+        base_host_ptr: usize,
+    }
+
+    impl AddressTranslator for TestTranslator {
+        fn translate_guest_to_host(&self, guest_addr: GuestPhysAddr) -> Option<PhysAddr> {
+            let host = self.base_host_ptr + guest_addr.as_usize();
+            Some(PhysAddr::from_usize(host))
+        }
+    }
+
+    #[test]
+    fn status_descriptor_len_must_be_at_least_one() {
+        // Allocate a backing buffer to simulate host memory
+        let mut mem = vec![0u8; 4096];
+        let base_ptr = mem.as_mut_ptr() as usize;
+        let translator = TestTranslator { base_host_ptr: base_ptr };
+        let accessor = Arc::new(GuestMemoryAccessor::new(translator));
+
+        // Create a descriptor table at a non-zero guest base within our backing buffer
+        let base = GuestPhysAddr::from(0x10usize);
+        let table: DescriptorTable<_> = DescriptorTable::new(base, 2, accessor.clone());
+
+        // Build a 2-descriptor chain: desc0 -> desc1
+        let mut d0 = VirtQueueDesc::new(GuestPhysAddr::from(0x100usize), 16, 0, 1);
+        d0.set_next(true);
+        let mut d1 = VirtQueueDesc::new(GuestPhysAddr::from(0x200usize), 0, 0, 0);
+        d1.set_write(true); // status descriptor must be write-only for device
+        d1.set_next(false);
+
+        table.write_desc(0, &d0).unwrap();
+        table.write_desc(1, &d1).unwrap();
+
+        // len == 0 should be invalid
+        let err = table.get_status_addr(0).unwrap_err();
+        assert!(matches!(err, VirtioError::InvalidQueue));
+
+        // Fix len to 1, now it should pass
+        let mut d1_ok = d1;
+        d1_ok.len = 1;
+        table.write_desc(1, &d1_ok).unwrap();
+        let ok_addr = table.get_status_addr(0).unwrap();
+        assert_eq!(ok_addr.as_usize(), 0x200);
     }
 }
