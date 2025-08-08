@@ -6,8 +6,8 @@ use spin::Mutex;
 
 use super::traits::ConsoleBackend;
 use crate::constants::*;
-use std::format;
-use std::fs::OpenOptions;
+// use std::format;
+// use std::fs::OpenOptions;
 
 /// Maximum output buffer size in bytes (64KB)
 const MAX_OUTPUT_BUFFER_SIZE: usize = 65536;
@@ -35,14 +35,14 @@ struct ConsoleStats {
 impl StdioConsoleBackend {
     /// Create a new stdio console backend
     pub fn new(device_index: usize) -> Self {
-        let file_path = format!("/virtio_console_{}", device_index);
-        // 新建一个文件, 如果文件存在，则删除再重新创建
-        let _ = OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(&file_path);
-        let _ = OpenOptions::new().read(true).open(&file_path);
+        // let file_path = format!("/virtio_console_{}", device_index);
+        // // 新建一个文件, 如果文件存在，则删除再重新创建
+        // let _ = OpenOptions::new()
+        //     .write(true)
+        //     .create(true)
+        //     .truncate(true)
+        //     .open(&file_path);
+        // let _ = OpenOptions::new().read(true).open(&file_path);
         Self {
             device_index,
             size: Mutex::new((VIRTIO_CONSOLE_DEFAULT_COLS, VIRTIO_CONSOLE_DEFAULT_ROWS)),

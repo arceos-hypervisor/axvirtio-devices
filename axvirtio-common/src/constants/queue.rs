@@ -42,6 +42,9 @@ pub const MAX_DESCRIPTOR_CHAIN_LENGTH: usize = 256;
 /// Minimum descriptor chain length (header + data + status)
 pub const MIN_DESCRIPTOR_CHAIN_LENGTH: usize = 3;
 
+/// Minimum descriptor chain length for flush
+pub const MIN_FLUSH_DESCRIPTOR_CHAIN_LENGTH: usize = 2;
+
 // ============================================================================
 // VirtIO Ring Structure Sizes
 // ============================================================================

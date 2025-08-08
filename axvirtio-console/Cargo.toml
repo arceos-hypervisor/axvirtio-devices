@@ -15,13 +15,13 @@ memory_addr = "0.3"
 spin = "0.9"
 log = "0.4"
 axdevice_base = { git = "https://github.com/arceos-hypervisor/axdevice_crates.git" }
-axstd = { git = "https://github.com/arceos-hypervisor/arceos.git", branch = "vmm" }
 arceos_api = { git = "https://github.com/arceos-hypervisor/arceos.git", branch = "vmm" }
 arm_pl011 = "0.1"
 kspin = "0.1"
+axstd = { git = "https://github.com/arceos-hypervisor/arceos.git", branch = "vmm", optional = true }
 
 [features]
 default = ["stdio-backend"]
-stdio-backend = []
+stdio-backend = ["dep:axstd"]
 socket-backend = []
 file-backend = []

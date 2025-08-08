@@ -197,7 +197,7 @@ impl BlockBackend for FileBackend {
 
         // For single sector reads, try cache first
         if buffer.len() == SECTOR_SIZE as usize {
-            let mut cache = self.cache.lock();
+            let cache = self.cache.lock();
             
             if cache.is_hit(sector) {
                 // Cache hit

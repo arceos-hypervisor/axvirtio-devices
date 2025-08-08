@@ -1,4 +1,5 @@
 use alloc::boxed::Box;
+use alloc::sync::Arc;
 use alloc::vec::Vec;
 use axaddrspace::{device::AccessWidth, GuestPhysAddr};
 use axerrno::AxResult;
@@ -436,19 +437,6 @@ impl VirtioMmioDevice {
 
     /// Parse VirtIO block request from descriptor chain
     fn parse_virtio_request(&self, queue: &VirtioQueue, head_index: u16) -> AxResult<BlockRequest> {
-        // Validate the descriptor chain
-        match queue.validate_virtio_block_chain(head_index, MIN_DESCRIPTOR_CHAIN_LENGTH) {
-            Ok(true) => {}
-            Ok(false) => {
-                error!("Invalid VirtIO block descriptor chain");
-                return Err(VirtioError::InvalidQueue.into());
-            }
-            Err(e) => {
-                error!("Failed to validate descriptor chain: {:?}", e);
-                return Err(VirtioError::InvalidQueue.into());
-            }
-        }
-
         // Parse the request header
         let header = match queue.parse_virtio_block_header(head_index) {
             Ok(header) => header,
@@ -457,6 +445,24 @@ impl VirtioMmioDevice {
                 return Err(VirtioError::InvalidQueue.into());
             }
         };
+
+        // Validate the descriptor chain
+        let min_length = if header.request_type == 4 { // VIRTIO_BLK_T_FLUSH
+            MIN_FLUSH_DESCRIPTOR_CHAIN_LENGTH
+        } else {
+            MIN_DESCRIPTOR_CHAIN_LENGTH 
+        };
+        match queue.validate_virtio_block_chain(head_index, min_length) {
+            Ok(true) => {}
+            Ok(false) => {
+                error!("Invalid VirtIO block descriptor chain {}", header.request_type);
+                return Err(VirtioError::InvalidQueue.into());
+            }
+            Err(e) => {
+                error!("Failed to validate descriptor chain: {:?}", e);
+                return Err(VirtioError::InvalidQueue.into());
+            }
+        }
 
         // Get data buffers
         let buffers = match queue.get_data_buffers(head_index, self.config.device_type) {

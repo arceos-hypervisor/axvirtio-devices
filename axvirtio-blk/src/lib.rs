@@ -3,6 +3,7 @@
 #[macro_use]
 extern crate alloc;
 
+#[cfg(feature = "file-backend")]
 extern crate axstd as std;
 
 mod backend;

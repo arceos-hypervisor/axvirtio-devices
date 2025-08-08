@@ -150,7 +150,7 @@ impl BlockRequest {
 
                     // Write data to guest memory using safe interface
                     if let Err(e) = write_guest_buffer(*guest_addr, &buffer[buffer_offset..end_offset]) {
-                        error!("Failed to write data to guest memory: {:?}", e);
+                        error!("Failed to write data to guest memory {:x}: {:?}", *guest_addr, e);
                         return VIRTIO_BLK_S_IOERR;
                     }
 
