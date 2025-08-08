@@ -50,16 +50,17 @@ impl<B: BlockBackend, T: AddressTranslator + Clone> VirtioMmioBlockDevice<B, T> 
     /// * `base_ipa` - Base IPA address for the device
     /// * `length` - MMIO region length
     /// * `backend` - Block backend implementation
-    /// * `transtor` - Guest memory accessor with address translation
+    /// * `translator` - Guest memory accessor with address translation
     pub fn new(
         base_ipa: GuestPhysAddr,
         length: usize,
-        backend: B,
-        transtor: T,
+        block_backend: B,
+        block_config: VirtioBlockConfig,
+        translator: T,
     ) -> VirtioResult<Self> {
         let config = VirtioConfig::new_block_device(base_ipa);
         let mut queues = Vec::new();
-        let accessor = Arc::new(GuestMemoryAccessor::new(transtor));
+        let accessor = Arc::new(GuestMemoryAccessor::new(translator));
 
         // Create default queue
         queues.push(VirtioQueue::new(0, config.max_queue_size, accessor.clone()));
@@ -68,7 +69,7 @@ impl<B: BlockBackend, T: AddressTranslator + Clone> VirtioMmioBlockDevice<B, T> 
             base_ipa,
             length,
             config,
-            block_config: VirtioBlockConfig::default(),
+            block_config,
             status: Mutex::new(0),
             driver_features: Mutex::new(VIRTIO_BLK_FEATURES),
             device_features_sel: Mutex::new(0),
@@ -77,7 +78,7 @@ impl<B: BlockBackend, T: AddressTranslator + Clone> VirtioMmioBlockDevice<B, T> 
             queues: Mutex::new(queues),
             interrupt_status: Mutex::new(0),
             config_generation: Mutex::new(0),
-            backend,
+            backend: block_backend,
             accessor,
         })
     }
@@ -119,7 +120,7 @@ impl<B: BlockBackend, T: AddressTranslator + Clone> VirtioMmioBlockDevice<B, T> 
         let value = match offset {
             VIRTIO_MMIO_MAGIC_VALUE => MMIO_MAGIC_VALUE,
             VIRTIO_MMIO_VERSION => MMIO_VERSION,
-            VIRTIO_MMIO_DEVICE_ID => self.config.device_id,
+            VIRTIO_MMIO_DEVICE_ID => self.config.device_type.to_device_id(),
             VIRTIO_MMIO_VENDOR_ID => self.config.vendor_id,
             VIRTIO_MMIO_DEVICE_FEATURES => {
                 let sel = *self.device_features_sel.lock();
@@ -450,6 +451,15 @@ impl<B: BlockBackend, T: AddressTranslator + Clone> VirtioMmioBlockDevice<B, T> 
         queue: &VirtioQueue<T>,
         head_index: u16,
     ) -> VirtioResult<BlockRequest<T>> {
+        // Parse the request header
+        let header = match queue.parse_virtio_block_header(head_index) {
+            Ok(header) => header,
+            Err(e) => {
+                error!("Failed to parse VirtIO block header: {:?}", e);
+                return Err(VirtioError::InvalidQueue);
+            }
+        };
+
         // Validate the descriptor chain
         match queue.validate_virtio_block_chain(head_index, MIN_DESCRIPTOR_CHAIN_LENGTH) {
             Ok(true) => {}
@@ -462,15 +472,6 @@ impl<B: BlockBackend, T: AddressTranslator + Clone> VirtioMmioBlockDevice<B, T> 
                 return Err(VirtioError::InvalidQueue);
             }
         }
-
-        // Parse the request header
-        let header = match queue.parse_virtio_block_header(head_index) {
-            Ok(header) => header,
-            Err(e) => {
-                error!("Failed to parse VirtIO block header: {:?}", e);
-                return Err(VirtioError::InvalidQueue);
-            }
-        };
 
         // Get data buffers
         let buffers = match queue.get_data_buffers(head_index, self.config.device_type) {

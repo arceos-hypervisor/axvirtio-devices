@@ -9,8 +9,6 @@ pub struct VirtioConfig {
     pub mmio_size: usize,
     /// Total MMIO size for all devices
     pub total_mmio_size: usize,
-    /// Device ID (varies by device type)
-    pub device_id: u32,
     /// Vendor ID (0x1AF4 for Red Hat/QEMU)
     pub vendor_id: u32,
     /// Maximum queue size
@@ -27,7 +25,6 @@ impl VirtioConfig {
     /// Create a new VirtIO configuration with device index and device ID
     pub fn new(
         base_addr: GuestPhysAddr,
-        device_id: u32,
         device_features: u64,
         num_queues: u16,
         device_type: VirtioDeviceID,
@@ -36,7 +33,6 @@ impl VirtioConfig {
             base_addr,
             mmio_size: VIRTIO_MMIO_DEVICE_SIZE,
             total_mmio_size: VIRTIO_MMIO_TOTAL_SIZE,
-            device_id,
             vendor_id: VIRTIO_VENDOR_ID,
             max_queue_size: DEFAULT_QUEUE_SIZE,
             num_queues,
@@ -51,7 +47,6 @@ impl VirtioConfig {
         let features = VIRTIO_F_VERSION_1 | VIRTIO_F_RING_EVENT_IDX;
         Self::new(
             base_ipa,
-            VIRTIO_DEVICE_ID_BLOCK,
             features,
             1,
             VirtioDeviceID::Block,
