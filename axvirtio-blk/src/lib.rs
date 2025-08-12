@@ -14,7 +14,7 @@
 //! ## Usage
 //!
 //! ```rust,no_run
-//! use axvirtio_blk::{VirtioMmioBlockDevice, BlockBackend, VirtioResult};
+//! use axvirtio_blk::{VirtioMmioBlockDevice, BlockBackend, VirtioBlockConfig, VirtioResult};
 //! use axvirtio_common::AddressTranslator;
 //! use axaddrspace::GuestPhysAddr;
 //! use memory_addr::PhysAddr;
@@ -44,7 +44,8 @@
 //! // Create and use the VirtIO block device
 //! let backend = MyBlockBackend;
 //! let translator = MyTranslator;
-//! let device = VirtioMmioBlockDevice::new(GuestPhysAddr::from(0x0a000000), 0x200, backend, translator);
+//! let block_config = VirtioBlockConfig::default();
+//! let device = VirtioMmioBlockDevice::new(GuestPhysAddr::from(0x0a000000), 0x200, backend, block_config, translator);
 //! ```
 
 #![no_std]
@@ -65,4 +66,5 @@ pub use axvirtio_common::{MmioTransport, VirtioConfig, VirtioError, VirtioQueue,
 
 // Re-export device-specific types
 pub use backend::BlockBackend;
+pub use block::config::VirtioBlockConfig;
 pub use mmio::VirtioMmioBlockDevice;

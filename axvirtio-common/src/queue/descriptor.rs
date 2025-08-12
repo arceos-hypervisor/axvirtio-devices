@@ -260,12 +260,11 @@ impl<T: AddressTranslator + Clone> DescriptorTable<T> {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloc::vec;
     use crate::memory::GuestMemoryAccessor;
+    use alloc::vec;
     use memory_addr::PhysAddr;
 
     #[derive(Clone)]
@@ -285,7 +284,9 @@ mod tests {
         // Allocate a backing buffer to simulate host memory
         let mut mem = vec![0u8; 4096];
         let base_ptr = mem.as_mut_ptr() as usize;
-        let translator = TestTranslator { base_host_ptr: base_ptr };
+        let translator = TestTranslator {
+            base_host_ptr: base_ptr,
+        };
         let accessor = Arc::new(GuestMemoryAccessor::new(translator));
 
         // Create a descriptor table at a non-zero guest base within our backing buffer

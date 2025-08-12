@@ -45,12 +45,7 @@ impl VirtioConfig {
     pub fn new_block_device(base_ipa: GuestPhysAddr) -> Self {
         // Block device specific features
         let features = VIRTIO_F_VERSION_1 | VIRTIO_F_RING_EVENT_IDX;
-        Self::new(
-            base_ipa,
-            features,
-            1,
-            VirtioDeviceID::Block,
-        )
+        Self::new(base_ipa, features, 1, VirtioDeviceID::Block)
     }
 }
 

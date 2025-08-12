@@ -601,7 +601,10 @@ impl<B: BlockBackend, T: AddressTranslator + Clone> VirtioMmioBlockDevice<B, T> 
             let driver_feats = *self.driver_features.lock();
             // Driver features must be subset of device features
             if (driver_feats & !self.config.device_features) != 0 {
-                warn!("Driver features contain unsupported bits: {:#x}", driver_feats & !self.config.device_features);
+                warn!(
+                    "Driver features contain unsupported bits: {:#x}",
+                    driver_feats & !self.config.device_features
+                );
                 // Clear FEATURES_OK and set FAILED per spec
                 new_status &= !VIRTIO_STATUS_FEATURES_OK;
                 new_status |= VIRTIO_STATUS_FAILED;
