@@ -15,31 +15,6 @@ use crate::{
 use alloc::{sync::Arc, vec::Vec};
 use axaddrspace::GuestPhysAddr;
 
-/// VirtIO block request header structure
-#[derive(Debug, Clone, Copy)]
-#[repr(C)]
-pub struct VirtioBlockHeader {
-    /// Request type (VIRTIO_BLK_T_IN, VIRTIO_BLK_T_OUT, etc.)
-    pub request_type: u32,
-    /// I/O priority (currently unused)
-    pub ioprio: u32,
-    /// Starting sector number
-    pub sector: u64,
-}
-
-impl VirtioBlockHeader {
-    /// Size of the VirtIO block header in bytes
-    pub const SIZE: u32 = 16; // type (4) + ioprio (4) + sector (8)
-
-    /// Read VirtIO block header from guest memory
-    pub fn read_from_guest<T>(addr: GuestPhysAddr, accessor: Arc<T>) -> VirtioResult<Self>
-    where
-        T: AddressTranslator,
-    {
-        accessor.read_obj(addr)
-    }
-}
-
 /// VirtIO queue implementation
 #[derive(Debug, Clone)]
 pub struct VirtioQueue<T: AddressTranslator + Clone> {
