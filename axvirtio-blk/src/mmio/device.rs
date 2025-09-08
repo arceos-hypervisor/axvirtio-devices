@@ -3,10 +3,10 @@ use axaddrspace::{device::AccessWidth, GuestPhysAddr};
 
 use spin::Mutex;
 
-use crate::backend::BlockBackend;
 use crate::block::config::VirtioBlockConfig;
 use crate::block::BlockRequest;
 use crate::constants::*;
+use crate::{backend::BlockBackend, mmio::VirtioBlockHeader};
 use axvirtio_common::{
     memory::AddressTranslator, MmioTransport, VirtioConfig, VirtioError, VirtioQueue, VirtioResult,
 };
@@ -468,7 +468,7 @@ impl<B: BlockBackend, T: AddressTranslator + Clone> VirtioMmioBlockDevice<B, T> 
         head_index: u16,
     ) -> VirtioResult<BlockRequest<T>> {
         // Parse the request header
-        let header = match queue.parse_virtio_block_header(head_index) {
+        let header = match self.parse_virtio_block_header(queue, head_index) {
             Ok(header) => header,
             Err(e) => {
                 error!("Failed to parse VirtIO block header: {:?}", e);
@@ -519,6 +519,55 @@ impl<B: BlockBackend, T: AddressTranslator + Clone> VirtioMmioBlockDevice<B, T> 
         );
 
         Ok(request)
+    }
+
+    /// Parse VirtIO block header
+    pub fn parse_virtio_block_header(
+        &self,
+        queue: &VirtioQueue<T>,
+        head_index: u16,
+    ) -> VirtioResult<VirtioBlockHeader> {
+        if let Some(ref desc_table) = queue.desc_table {
+            let descriptors = desc_table.follow_chain(head_index)?;
+            if descriptors.is_empty() {
+                return Err(VirtioError::InvalidDescriptor);
+            }
+
+            // Get the first descriptor which should contain the request header
+            let header_desc = &descriptors[0];
+
+            // Validate that the first descriptor is readable (not write-only)
+            if header_desc.is_write() {
+                warn!("Request header descriptor should not be write-only");
+                return Err(VirtioError::InvalidDescriptor);
+            }
+
+            // Check if the descriptor is large enough to contain the header
+            if header_desc.len < VirtioBlockHeader::SIZE {
+                warn!(
+                    "Request header descriptor too small: {} bytes, need {} bytes",
+                    header_desc.len,
+                    VirtioBlockHeader::SIZE
+                );
+                return Err(VirtioError::InvalidDescriptor);
+            }
+
+            // Read the header from guest memory
+            let header_addr = header_desc.guest_addr();
+
+            // Use the structured header reading
+            let header = VirtioBlockHeader::read_from_guest(header_addr, self.accessor.clone())?;
+
+            trace!(
+                "Parsed VirtIO block header: type={}, sector={}",
+                header.request_type,
+                header.sector
+            );
+
+            Ok(header)
+        } else {
+            Err(VirtioError::QueueNotReady)
+        }
     }
 
     /// Execute a block request
