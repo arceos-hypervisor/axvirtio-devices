@@ -2,10 +2,7 @@ use crate::backend::BlockBackend;
 use crate::constants::*;
 use alloc::{sync::Arc, vec::Vec};
 use axaddrspace::GuestPhysAddr;
-use axvirtio_common::{
-    memory::{AddressTranslator, GuestMemoryAccessor},
-    VirtioResult,
-};
+use axvirtio_common::{memory::AddressTranslator, VirtioResult};
 
 /// Block request types
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
@@ -74,7 +71,7 @@ pub struct BlockRequest<T: AddressTranslator + Clone> {
     /// Data source (buffer or guest memory)
     pub data_source: DataSource,
     /// Guest memory accessor
-    accessor: Arc<GuestMemoryAccessor<T>>,
+    accessor: Arc<T>,
 }
 
 impl<T: AddressTranslator + Clone> BlockRequest<T> {
@@ -84,7 +81,7 @@ impl<T: AddressTranslator + Clone> BlockRequest<T> {
         sector: u64,
         buffers: Vec<(GuestPhysAddr, usize, bool)>,
         status_addr: GuestPhysAddr,
-        accessor: Arc<GuestMemoryAccessor<T>>,
+        accessor: Arc<T>,
     ) -> Self {
         Self {
             request_type,

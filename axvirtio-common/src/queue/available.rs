@@ -1,6 +1,6 @@
 use crate::constants::*;
 use crate::error::{VirtioError, VirtioResult};
-use crate::memory::{AddressTranslator, GuestMemoryAccessor};
+use crate::memory::AddressTranslator;
 use alloc::sync::Arc;
 use axaddrspace::GuestPhysAddr;
 
@@ -45,12 +45,12 @@ pub struct AvailableRing<T: AddressTranslator + Clone> {
     /// Last seen available index
     pub last_avail_idx: u16,
     /// Guest memory accessor
-    accessor: Arc<GuestMemoryAccessor<T>>,
+    accessor: Arc<T>,
 }
 
 impl<T: AddressTranslator + Clone> AvailableRing<T> {
     /// Create a new available ring
-    pub fn new(base_addr: GuestPhysAddr, size: u16, accessor: Arc<GuestMemoryAccessor<T>>) -> Self {
+    pub fn new(base_addr: GuestPhysAddr, size: u16, accessor: Arc<T>) -> Self {
         Self {
             base_addr,
             size,

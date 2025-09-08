@@ -1,5 +1,5 @@
 use crate::error::{VirtioError, VirtioResult};
-use crate::memory::{AddressTranslator, GuestMemoryAccessor};
+use crate::memory::AddressTranslator;
 use crate::{constants::*, VirtioDeviceID};
 use alloc::sync::Arc;
 use alloc::vec::Vec;
@@ -96,12 +96,12 @@ pub struct DescriptorTable<T: AddressTranslator + Clone> {
     /// Number of descriptors
     pub size: u16,
     /// Guest memory accessor
-    accessor: Arc<GuestMemoryAccessor<T>>,
+    accessor: Arc<T>,
 }
 
 impl<T: AddressTranslator + Clone> DescriptorTable<T> {
     /// Create a new descriptor table
-    pub fn new(base_addr: GuestPhysAddr, size: u16, accessor: Arc<GuestMemoryAccessor<T>>) -> Self {
+    pub fn new(base_addr: GuestPhysAddr, size: u16, accessor: Arc<T>) -> Self {
         Self {
             base_addr,
             size,
@@ -263,7 +263,6 @@ impl<T: AddressTranslator + Clone> DescriptorTable<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::memory::GuestMemoryAccessor;
     use alloc::vec;
     use memory_addr::PhysAddr;
 
@@ -287,7 +286,7 @@ mod tests {
         let translator = TestTranslator {
             base_host_ptr: base_ptr,
         };
-        let accessor = Arc::new(GuestMemoryAccessor::new(translator));
+        let accessor = Arc::new(translator);
 
         // Create a descriptor table at a non-zero guest base within our backing buffer
         let base = GuestPhysAddr::from(0x10usize);

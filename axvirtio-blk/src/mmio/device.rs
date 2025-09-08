@@ -8,8 +8,7 @@ use crate::block::config::VirtioBlockConfig;
 use crate::block::BlockRequest;
 use crate::constants::*;
 use axvirtio_common::{
-    memory::{AddressTranslator, GuestMemoryAccessor},
-    MmioTransport, VirtioConfig, VirtioError, VirtioQueue, VirtioResult,
+    memory::AddressTranslator, MmioTransport, VirtioConfig, VirtioError, VirtioQueue, VirtioResult,
 };
 
 /// VirtIO MMIO device state
@@ -41,7 +40,7 @@ pub struct VirtioMmioBlockDevice<B: BlockBackend, T: AddressTranslator + Clone> 
     /// Block backend
     backend: B,
     /// Guest memory accessor
-    accessor: Arc<GuestMemoryAccessor<T>>,
+    accessor: Arc<T>,
 }
 
 impl<B: BlockBackend, T: AddressTranslator + Clone> VirtioMmioBlockDevice<B, T> {
@@ -62,7 +61,7 @@ impl<B: BlockBackend, T: AddressTranslator + Clone> VirtioMmioBlockDevice<B, T> 
         // Include block-specific feature bits in device features
         config.device_features |= VIRTIO_BLK_FEATURES;
         let mut queues = Vec::new();
-        let accessor = Arc::new(GuestMemoryAccessor::new(translator));
+        let accessor = Arc::new(translator);
 
         // Create default queue
         queues.push(VirtioQueue::new(0, config.max_queue_size, accessor.clone()));
@@ -454,8 +453,10 @@ impl<B: BlockBackend, T: AddressTranslator + Clone> VirtioMmioBlockDevice<B, T> 
         // Execute the request
         let status = self.execute_block_request(&request)?;
 
+        let request_size = request.size() as u32;
+
         // Add the completed request to the used ring
-        self.add_used_buffer(queue, head_index, request.size() as u32, status);
+        self.add_used_buffer(queue, head_index, request_size, status);
 
         Ok(())
     }

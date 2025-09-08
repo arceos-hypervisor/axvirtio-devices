@@ -9,7 +9,7 @@ pub use used::{UsedRing, VirtQueueUsed, VirtqUsedElem};
 
 use crate::{
     error::{VirtioError, VirtioResult},
-    memory::{AddressTranslator, GuestMemoryAccessor},
+    memory::AddressTranslator,
     VirtioDeviceID,
 };
 use alloc::{sync::Arc, vec::Vec};
@@ -32,10 +32,7 @@ impl VirtioBlockHeader {
     pub const SIZE: u32 = 16; // type (4) + ioprio (4) + sector (8)
 
     /// Read VirtIO block header from guest memory
-    pub fn read_from_guest<T>(
-        addr: GuestPhysAddr,
-        accessor: Arc<GuestMemoryAccessor<T>>,
-    ) -> VirtioResult<Self>
+    pub fn read_from_guest<T>(addr: GuestPhysAddr, accessor: Arc<T>) -> VirtioResult<Self>
     where
         T: AddressTranslator,
     {
@@ -57,7 +54,7 @@ pub struct VirtioQueue<T: AddressTranslator + Clone> {
     /// Used ring
     used_ring: Option<UsedRing<T>>,
     /// Guest memory accessor
-    accessor: Arc<GuestMemoryAccessor<T>>,
+    accessor: Arc<T>,
     /// Maximum queue size
     pub max_size: u16,
     /// Queue ready flag
@@ -78,7 +75,7 @@ pub struct VirtioQueue<T: AddressTranslator + Clone> {
 
 impl<T: AddressTranslator + Clone> VirtioQueue<T> {
     /// Create a new VirtIO queue
-    pub fn new(index: u16, size: u16, accessor: Arc<GuestMemoryAccessor<T>>) -> Self {
+    pub fn new(index: u16, size: u16, accessor: Arc<T>) -> Self {
         Self {
             index,
             size,
