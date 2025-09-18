@@ -1,7 +1,7 @@
 mod device;
 use alloc::sync::Arc;
-use axaddrspace::GuestPhysAddr;
-use axvirtio_common::{AddressTranslator, VirtioResult};
+use axaddrspace::{GuestMemoryAccessor, GuestPhysAddr};
+use axvirtio_common::{VirtioError, VirtioResult};
 pub use device::VirtioMmioBlockDevice;
 
 /// VirtIO block request header structure
@@ -23,8 +23,10 @@ impl VirtioBlockHeader {
     /// Read VirtIO block header from guest memory
     pub fn read_from_guest<T>(addr: GuestPhysAddr, accessor: Arc<T>) -> VirtioResult<Self>
     where
-        T: AddressTranslator,
+        T: GuestMemoryAccessor,
     {
-        accessor.read_obj(addr)
+        accessor
+            .read_obj(addr)
+            .map_err(|_| VirtioError::InvalidAddress)
     }
 }

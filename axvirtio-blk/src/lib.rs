@@ -15,7 +15,7 @@
 //!
 //! ```rust,no_run
 //! use axvirtio_blk::{VirtioMmioBlockDevice, BlockBackend, VirtioBlockConfig, VirtioResult};
-//! use axvirtio_common::AddressTranslator;
+//! use axaddrspace::GuestMemoryAccessor;
 //! use axaddrspace::GuestPhysAddr;
 //! use memory_addr::PhysAddr;
 //!
@@ -35,8 +35,8 @@
 //!
 //! #[derive(Clone)]
 //! struct MyTranslator;
-//! impl AddressTranslator for MyTranslator {
-//!     fn translate_guest_to_host(&self, guest_addr: GuestPhysAddr) -> Option<PhysAddr> {
+//! impl GuestMemoryAccessor for MyTranslator {
+//!     fn translate_and_get_limit(&self, guest_addr: GuestPhysAddr) -> Option<(PhysAddr, usize)> {
 //!         None
 //!     }
 //! }

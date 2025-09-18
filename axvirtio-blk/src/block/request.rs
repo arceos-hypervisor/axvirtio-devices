@@ -1,8 +1,8 @@
 use crate::backend::BlockBackend;
 use crate::constants::*;
 use alloc::{sync::Arc, vec::Vec};
-use axaddrspace::GuestPhysAddr;
-use axvirtio_common::{memory::AddressTranslator, VirtioResult};
+use axaddrspace::{GuestMemoryAccessor, GuestPhysAddr};
+use axvirtio_common::VirtioResult;
 
 /// Block request types
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
@@ -63,7 +63,7 @@ pub enum BlockRequestResult {
 
 /// Unified block request structure
 #[derive(Debug)]
-pub struct BlockRequest<T: AddressTranslator + Clone> {
+pub struct BlockRequest<T: GuestMemoryAccessor + Clone> {
     /// Request type
     pub request_type: u32,
     /// Starting sector
@@ -74,7 +74,7 @@ pub struct BlockRequest<T: AddressTranslator + Clone> {
     accessor: Arc<T>,
 }
 
-impl<T: AddressTranslator + Clone> BlockRequest<T> {
+impl<T: GuestMemoryAccessor + Clone> BlockRequest<T> {
     /// Create a new block request with guest memory buffers
     pub fn new_virtio(
         request_type: u32,

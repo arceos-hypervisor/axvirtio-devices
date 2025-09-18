@@ -17,4 +17,4 @@ repository = "https://github.com/arceos-hypervisor/axvirtio"
 axvirtio-common = { path = "axvirtio-common" }
 axvirtio-blk = { path = "axvirtio-blk" }
 
-axaddrspace = { git = "https://github.com/arceos-hypervisor/axaddrspace.git" }
+axaddrspace = "0.1.2"

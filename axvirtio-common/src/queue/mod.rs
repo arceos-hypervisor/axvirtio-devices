@@ -9,15 +9,14 @@ pub use used::{UsedRing, VirtQueueUsed, VirtqUsedElem};
 
 use crate::{
     error::{VirtioError, VirtioResult},
-    memory::AddressTranslator,
     VirtioDeviceID,
 };
 use alloc::{sync::Arc, vec::Vec};
-use axaddrspace::GuestPhysAddr;
+use axaddrspace::{GuestMemoryAccessor, GuestPhysAddr};
 
 /// VirtIO queue implementation
 #[derive(Debug, Clone)]
-pub struct VirtioQueue<T: AddressTranslator + Clone> {
+pub struct VirtioQueue<T: GuestMemoryAccessor + Clone> {
     /// Queue index
     pub index: u16,
     /// Queue size
@@ -48,7 +47,7 @@ pub struct VirtioQueue<T: AddressTranslator + Clone> {
     pub event_idx_enabled: bool,
 }
 
-impl<T: AddressTranslator + Clone> VirtioQueue<T> {
+impl<T: GuestMemoryAccessor + Clone> VirtioQueue<T> {
     /// Create a new VirtIO queue
     pub fn new(index: u16, size: u16, accessor: Arc<T>) -> Self {
         Self {
@@ -286,7 +285,9 @@ impl<T: AddressTranslator + Clone> VirtioQueue<T> {
         );
 
         // Write the status byte to guest memory using the new memory access interface
-        self.accessor.write_obj(status_addr_guest, status)?;
+        self.accessor
+            .write_obj(status_addr_guest, status)
+            .map_err(|_| VirtioError::InvalidAddress)?;
 
         Ok(())
     }

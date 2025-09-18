@@ -1,8 +1,7 @@
 use crate::constants::*;
 use crate::error::{VirtioError, VirtioResult};
-use crate::memory::AddressTranslator;
 use alloc::sync::Arc;
-use axaddrspace::GuestPhysAddr;
+use axaddrspace::{GuestMemoryAccessor, GuestPhysAddr};
 
 /// VirtIO used ring element
 #[repr(C)]
@@ -55,7 +54,7 @@ impl VirtQueueUsed {
 
 /// Used ring management
 #[derive(Debug, Clone)]
-pub struct UsedRing<T: AddressTranslator + Clone> {
+pub struct UsedRing<T: GuestMemoryAccessor + Clone> {
     /// Base address of the used ring
     pub base_addr: GuestPhysAddr,
     /// Queue size
@@ -66,7 +65,7 @@ pub struct UsedRing<T: AddressTranslator + Clone> {
     accessor: Arc<T>,
 }
 
-impl<T: AddressTranslator + Clone> UsedRing<T> {
+impl<T: GuestMemoryAccessor + Clone> UsedRing<T> {
     /// Create a new used ring
     pub fn new(base_addr: GuestPhysAddr, size: u16, accessor: Arc<T>) -> Self {
         Self {
@@ -133,7 +132,9 @@ impl<T: AddressTranslator + Clone> UsedRing<T> {
         let used_elem = VirtqUsedElem::new(id, len);
 
         // Write the used element to guest memory using injected memory accessor
-        self.accessor.write_obj(elem_addr, used_elem)?;
+        self.accessor
+            .write_obj(elem_addr, used_elem)
+            .map_err(|_| VirtioError::InvalidAddress)?;
 
         // Update the used index
         self.used_idx = self.used_idx.wrapping_add(1);
@@ -152,7 +153,9 @@ impl<T: AddressTranslator + Clone> UsedRing<T> {
 
         // Write the used index to the header (offset 2 bytes for flags)
         let idx_addr = self.base_addr + 2;
-        self.accessor.write_obj(idx_addr, self.used_idx)?;
+        self.accessor
+            .write_obj(idx_addr, self.used_idx)
+            .map_err(|_| VirtioError::InvalidAddress)?;
 
         Ok(())
     }
@@ -163,7 +166,9 @@ impl<T: AddressTranslator + Clone> UsedRing<T> {
             return Err(VirtioError::QueueNotReady);
         }
 
-        self.accessor.read_obj(self.base_addr)
+        self.accessor
+            .read_obj(self.base_addr)
+            .map_err(|_| VirtioError::InvalidAddress)
     }
 
     /// Write the used ring header
@@ -172,7 +177,9 @@ impl<T: AddressTranslator + Clone> UsedRing<T> {
             return Err(VirtioError::QueueNotReady);
         }
 
-        self.accessor.write_obj(self.base_addr, *header)
+        self.accessor
+            .write_obj(self.base_addr, *header)
+            .map_err(|_| VirtioError::InvalidAddress)
     }
 
     /// Get the current used index

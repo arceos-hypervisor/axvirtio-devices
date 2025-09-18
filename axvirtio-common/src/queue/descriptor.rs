@@ -1,9 +1,8 @@
 use crate::error::{VirtioError, VirtioResult};
-use crate::memory::AddressTranslator;
 use crate::{constants::*, VirtioDeviceID};
 use alloc::sync::Arc;
 use alloc::vec::Vec;
-use axaddrspace::GuestPhysAddr;
+use axaddrspace::{GuestMemoryAccessor, GuestPhysAddr};
 
 /// VirtIO queue descriptor
 #[repr(C)]
@@ -90,7 +89,7 @@ impl VirtQueueDesc {
 
 /// Descriptor table management
 #[derive(Debug, Clone)]
-pub struct DescriptorTable<T: AddressTranslator + Clone> {
+pub struct DescriptorTable<T: GuestMemoryAccessor + Clone> {
     /// Base address of the descriptor table
     pub base_addr: GuestPhysAddr,
     /// Number of descriptors
@@ -99,7 +98,7 @@ pub struct DescriptorTable<T: AddressTranslator + Clone> {
     accessor: Arc<T>,
 }
 
-impl<T: AddressTranslator + Clone> DescriptorTable<T> {
+impl<T: GuestMemoryAccessor + Clone> DescriptorTable<T> {
     /// Create a new descriptor table
     pub fn new(base_addr: GuestPhysAddr, size: u16, accessor: Arc<T>) -> Self {
         Self {
@@ -137,7 +136,9 @@ impl<T: AddressTranslator + Clone> DescriptorTable<T> {
 
         let desc_addr = self.desc_addr(index).ok_or(VirtioError::InvalidQueue)?;
 
-        self.accessor.read_obj(desc_addr)
+        self.accessor
+            .read_obj(desc_addr)
+            .map_err(|_| VirtioError::InvalidAddress)
     }
 
     /// Write a descriptor to the table
@@ -148,7 +149,9 @@ impl<T: AddressTranslator + Clone> DescriptorTable<T> {
 
         let desc_addr = self.desc_addr(index).ok_or(VirtioError::InvalidQueue)?;
 
-        self.accessor.write_obj(desc_addr, *desc)?;
+        self.accessor
+            .write_obj(desc_addr, *desc)
+            .map_err(|_| VirtioError::InvalidAddress)?;
 
         Ok(())
     }
@@ -271,10 +274,10 @@ mod tests {
         base_host_ptr: usize,
     }
 
-    impl AddressTranslator for TestTranslator {
-        fn translate_guest_to_host(&self, guest_addr: GuestPhysAddr) -> Option<PhysAddr> {
-            let host = self.base_host_ptr + guest_addr.as_usize();
-            Some(PhysAddr::from_usize(host))
+    impl GuestMemoryAccessor for TestTranslator {
+        fn translate_and_get_limit(&self, guest_addr: GuestPhysAddr) -> Option<(PhysAddr, usize)> {
+            let offset = guest_addr.as_usize();
+            Some((PhysAddr::from(self.base_host_ptr + offset), usize::MAX))
         }
     }
 

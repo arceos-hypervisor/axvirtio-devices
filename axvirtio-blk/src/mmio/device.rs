@@ -1,4 +1,5 @@
 use alloc::{sync::Arc, vec::Vec};
+use axaddrspace::GuestMemoryAccessor;
 use axaddrspace::{device::AccessWidth, GuestPhysAddr};
 
 use spin::Mutex;
@@ -7,12 +8,10 @@ use crate::block::config::VirtioBlockConfig;
 use crate::block::BlockRequest;
 use crate::constants::*;
 use crate::{backend::BlockBackend, mmio::VirtioBlockHeader};
-use axvirtio_common::{
-    memory::AddressTranslator, MmioTransport, VirtioConfig, VirtioError, VirtioQueue, VirtioResult,
-};
+use axvirtio_common::{MmioTransport, VirtioConfig, VirtioError, VirtioQueue, VirtioResult};
 
 /// VirtIO MMIO device state
-pub struct VirtioMmioBlockDevice<B: BlockBackend, T: AddressTranslator + Clone> {
+pub struct VirtioMmioBlockDevice<B: BlockBackend, T: GuestMemoryAccessor + Clone> {
     /// Base IPA address
     pub(crate) base_ipa: GuestPhysAddr,
     /// MMIO region length
@@ -43,7 +42,7 @@ pub struct VirtioMmioBlockDevice<B: BlockBackend, T: AddressTranslator + Clone> 
     accessor: Arc<T>,
 }
 
-impl<B: BlockBackend, T: AddressTranslator + Clone> VirtioMmioBlockDevice<B, T> {
+impl<B: BlockBackend, T: GuestMemoryAccessor + Clone> VirtioMmioBlockDevice<B, T> {
     /// Create a new VirtIO MMIO device
     /// # Arguments
     /// * `base_ipa` - Base IPA address for the device

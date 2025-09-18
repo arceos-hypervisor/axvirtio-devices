@@ -16,8 +16,6 @@ pub mod constants;
 mod device_type;
 /// Error types and result handling for VirtIO operations
 pub mod error;
-/// Guest memory access traits and implementations
-pub mod memory;
 /// MMIO transport layer for VirtIO devices
 pub mod mmio;
 /// VirtIO queue management and operations
@@ -27,7 +25,6 @@ pub mod queue;
 pub use config::VirtioConfig;
 pub use device_type::VirtioDeviceID;
 pub use error::{VirtioError, VirtioResult};
-pub use memory::AddressTranslator;
 pub use mmio::MmioTransport;
 pub use queue::VirtioQueue;
 

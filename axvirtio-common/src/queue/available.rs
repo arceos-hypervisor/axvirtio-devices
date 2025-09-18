@@ -1,7 +1,7 @@
 use crate::constants::*;
 use crate::error::{VirtioError, VirtioResult};
-use crate::memory::AddressTranslator;
 use alloc::sync::Arc;
+use axaddrspace::GuestMemoryAccessor;
 use axaddrspace::GuestPhysAddr;
 
 /// VirtIO available ring structure
@@ -37,7 +37,7 @@ impl VirtQueueAvail {
 
 /// Available ring management
 #[derive(Debug, Clone)]
-pub struct AvailableRing<T: AddressTranslator + Clone> {
+pub struct AvailableRing<T: GuestMemoryAccessor + Clone> {
     /// Base address of the available ring
     pub base_addr: GuestPhysAddr,
     /// Queue size
@@ -48,7 +48,7 @@ pub struct AvailableRing<T: AddressTranslator + Clone> {
     accessor: Arc<T>,
 }
 
-impl<T: AddressTranslator + Clone> AvailableRing<T> {
+impl<T: GuestMemoryAccessor + Clone> AvailableRing<T> {
     /// Create a new available ring
     pub fn new(base_addr: GuestPhysAddr, size: u16, accessor: Arc<T>) -> Self {
         Self {
@@ -111,7 +111,9 @@ impl<T: AddressTranslator + Clone> AvailableRing<T> {
             return Err(VirtioError::QueueNotReady);
         }
 
-        self.accessor.read_obj(self.base_addr)
+        self.accessor
+            .read_obj(self.base_addr)
+            .map_err(|_| VirtioError::InvalidAddress)
     }
 
     /// Write the available ring header
@@ -120,7 +122,9 @@ impl<T: AddressTranslator + Clone> AvailableRing<T> {
             return Err(VirtioError::QueueNotReady);
         }
 
-        self.accessor.write_obj(self.base_addr, header)
+        self.accessor
+            .write_obj(self.base_addr, header)
+            .map_err(|_| VirtioError::InvalidAddress)
     }
 
     /// Read the current available index from guest memory
@@ -131,7 +135,9 @@ impl<T: AddressTranslator + Clone> AvailableRing<T> {
 
         // Read the idx field from the header (offset 2 bytes for flags)
         let idx_addr = self.base_addr + 2;
-        self.accessor.read_obj(idx_addr)
+        self.accessor
+            .read_obj(idx_addr)
+            .map_err(|_| VirtioError::InvalidAddress)
     }
 
     /// Get the available index for external access
@@ -149,7 +155,9 @@ impl<T: AddressTranslator + Clone> AvailableRing<T> {
             .ring_entry_addr(ring_index % self.size)
             .ok_or(VirtioError::InvalidQueue)?;
 
-        self.accessor.read_obj(entry_addr)
+        self.accessor
+            .read_obj(entry_addr)
+            .map_err(|_| VirtioError::InvalidAddress)
     }
 
     /// Write a descriptor index to the available ring
@@ -162,7 +170,9 @@ impl<T: AddressTranslator + Clone> AvailableRing<T> {
             .ring_entry_addr(ring_index % self.size)
             .ok_or(VirtioError::InvalidQueue)?;
 
-        self.accessor.write_obj(entry_addr, desc_index)?;
+        self.accessor
+            .write_obj(entry_addr, desc_index)
+            .map_err(|_| VirtioError::InvalidAddress)?;
 
         Ok(())
     }
@@ -194,7 +204,9 @@ impl<T: AddressTranslator + Clone> AvailableRing<T> {
         }
 
         let event_addr = self.used_event_addr();
-        self.accessor.read_obj(event_addr)
+        self.accessor
+            .read_obj(event_addr)
+            .map_err(|_| VirtioError::InvalidAddress)
     }
 
     /// Write the used event field (for event_idx feature)
@@ -204,6 +216,8 @@ impl<T: AddressTranslator + Clone> AvailableRing<T> {
         }
 
         let event_addr = self.used_event_addr();
-        self.accessor.write_obj(event_addr, event)
+        self.accessor
+            .write_obj(event_addr, event)
+            .map_err(|_| VirtioError::InvalidAddress)
     }
 }
