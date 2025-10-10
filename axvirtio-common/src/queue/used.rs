@@ -35,7 +35,7 @@ impl VirtqUsedElem {
 ///
 /// The complete used ring in guest memory consists of:
 /// 1. This header structure (VirtQueueUsed)
-/// 2. An array of used elements (ring[queue_size], each VirtqUsedElem)
+/// 2. An array of used elements (ring[\queue_size], each VirtqUsedElem)
 /// 3. An optional avail_event field (if VIRTIO_F_EVENT_IDX is negotiated)
 ///
 /// This structure is used by `UsedRing` to read/write the header portion

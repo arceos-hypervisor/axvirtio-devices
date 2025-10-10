@@ -12,7 +12,7 @@ use axaddrspace::GuestPhysAddr;
 ///
 /// The complete available ring in guest memory consists of:
 /// 1. This header structure (VirtQueueAvail)
-/// 2. An array of descriptor indices (ring[queue_size])
+/// 2. An array of descriptor indices (ring[\queue_size])
 /// 3. An optional used_event field (if VIRTIO_F_EVENT_IDX is negotiated)
 ///
 /// This structure is used by `AvailableRing` to read/write the header portion
