@@ -4,7 +4,19 @@ use alloc::sync::Arc;
 use axaddrspace::GuestMemoryAccessor;
 use axaddrspace::GuestPhysAddr;
 
-/// VirtIO available ring structure
+/// VirtIO available ring header structure.
+/// 
+/// This structure represents the memory layout of the available ring header
+/// in guest memory according to the VirtIO specification. It is a simple
+/// C-compatible data structure that directly maps to guest memory.
+/// 
+/// The complete available ring in guest memory consists of:
+/// 1. This header structure (VirtQueueAvail)
+/// 2. An array of descriptor indices (ring[queue_size])
+/// 3. An optional used_event field (if VIRTIO_F_EVENT_IDX is negotiated)
+/// 
+/// This structure is used by `AvailableRing` to read/write the header portion
+/// of the available ring through guest memory accessor.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default)]
 pub struct VirtQueueAvail {
@@ -35,7 +47,33 @@ impl VirtQueueAvail {
     }
 }
 
-/// Available ring management
+/// Available ring management structure.
+/// 
+/// This structure provides a high-level interface for managing the VirtIO
+/// available ring in guest memory. It wraps the guest memory accessor and
+/// provides methods to read/write various parts of the available ring:
+/// - The header (VirtQueueAvail structure)
+/// - The ring array of descriptor indices
+/// - The used_event field (if VIRTIO_F_EVENT_IDX is negotiated)
+/// 
+/// Relationship with VirtQueueAvail:
+/// - VirtQueueAvail defines the memory layout of the available ring header
+/// - AvailableRing uses VirtQueueAvail to access the header in guest memory
+/// - AvailableRing manages the entire available ring structure, not just the header
+/// 
+/// Memory Layout:
+/// ```text
+/// base_addr -> +-------------------+
+///              | VirtQueueAvail    |  (flags + idx)
+///              +-------------------+
+///              | ring[0]           |  (descriptor index)
+///              | ring[1]           |
+///              | ...               |
+///              | ring[queue_size-1]|
+///              +-------------------+
+///              | used_event        |  (optional, if event_idx enabled)
+///              +-------------------+
+/// ```
 #[derive(Debug, Clone)]
 pub struct AvailableRing<T: GuestMemoryAccessor + Clone> {
     /// Base address of the available ring

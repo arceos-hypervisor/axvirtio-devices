@@ -2,7 +2,7 @@ use crate::backend::BlockBackend;
 use crate::constants::*;
 use alloc::{sync::Arc, vec::Vec};
 use axaddrspace::{GuestMemoryAccessor, GuestPhysAddr};
-use axvirtio_common::VirtioResult;
+use axvirtio_common::{VirtioError, VirtioResult};
 
 /// Block request types
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
@@ -24,7 +24,7 @@ impl From<u32> for BlockRequestType {
             VIRTIO_BLK_T_IN => BlockRequestType::Read,
             VIRTIO_BLK_T_OUT => BlockRequestType::Write,
             VIRTIO_BLK_T_FLUSH => BlockRequestType::Flush,
-            _ => BlockRequestType::Unsupported, // Default to read for unknown types
+            _ => BlockRequestType::Unsupported, // Default to Unsupported for unknown types
         }
     }
 }
@@ -35,7 +35,9 @@ impl From<BlockRequestType> for u32 {
             BlockRequestType::Read => VIRTIO_BLK_T_IN,
             BlockRequestType::Write => VIRTIO_BLK_T_OUT,
             BlockRequestType::Flush => VIRTIO_BLK_T_FLUSH,
-            BlockRequestType::Unsupported => VIRTIO_BLK_T_IN,
+            BlockRequestType::Unsupported => {
+                panic!("Unsupported request type cannot be converted to u32")
+            }
         }
     }
 }
@@ -157,8 +159,8 @@ impl<T: GuestMemoryAccessor + Clone> BlockRequest<T> {
 
                     let end_offset = buffer_offset + len;
                     if end_offset > buffer.len() {
-                        warn!("Data buffer exceeds read data range");
-                        return Ok(BlockRequestResult::IoError);
+                        error!("Data buffer exceeds read data range");
+                        return Err(VirtioError::InvalidBufferSize);
                     }
 
                     // Write data to guest memory using injected memory accessor
@@ -167,7 +169,7 @@ impl<T: GuestMemoryAccessor + Clone> BlockRequest<T> {
                         .write_buffer(*guest_addr, &buffer[buffer_offset..end_offset])
                     {
                         error!("Failed to write data to guest memory: {:?}", e);
-                        return Ok(BlockRequestResult::IoError);
+                        return Err(VirtioError::MemoryError);
                     }
 
                     buffer_offset = end_offset;
@@ -177,7 +179,7 @@ impl<T: GuestMemoryAccessor + Clone> BlockRequest<T> {
             }
             Err(e) => {
                 error!("Failed to read from backend: {:?}", e);
-                Ok(BlockRequestResult::IoError)
+                Err(VirtioError::BackendError)
             }
         }
     }
@@ -201,8 +203,8 @@ impl<T: GuestMemoryAccessor + Clone> BlockRequest<T> {
 
             let end_offset = buffer_offset + len;
             if end_offset > buffer.len() {
-                warn!("Data buffer exceeds write data range");
-                return Ok(BlockRequestResult::Unsupported);
+                error!("Data buffer exceeds write data range");
+                return Err(VirtioError::InvalidBufferSize);
             }
 
             // Read data from guest memory using injected memory accessor
@@ -211,7 +213,7 @@ impl<T: GuestMemoryAccessor + Clone> BlockRequest<T> {
                 .read_buffer(*guest_addr, &mut buffer[buffer_offset..end_offset])
             {
                 error!("Failed to read data from guest memory: {:?}", e);
-                return Ok(BlockRequestResult::IoError);
+                return Err(VirtioError::MemoryError);
             }
 
             buffer_offset = end_offset;
@@ -229,7 +231,7 @@ impl<T: GuestMemoryAccessor + Clone> BlockRequest<T> {
             }
             Err(e) => {
                 error!("Failed to write to backend: {:?}", e);
-                Ok(BlockRequestResult::IoError)
+                Err(VirtioError::BackendError)
             }
         }
     }
@@ -247,7 +249,7 @@ impl<T: GuestMemoryAccessor + Clone> BlockRequest<T> {
             }
             Err(e) => {
                 error!("Failed to flush backend: {:?}", e);
-                Ok(BlockRequestResult::IoError)
+                Err(VirtioError::BackendError)
             }
         }
     }

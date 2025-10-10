@@ -25,7 +25,6 @@ pub mod queue;
 pub use config::VirtioConfig;
 pub use device_type::VirtioDeviceID;
 pub use error::{VirtioError, VirtioResult};
-pub use mmio::MmioTransport;
 pub use queue::VirtioQueue;
 
 /// Re-export commonly used constants

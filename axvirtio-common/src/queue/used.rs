@@ -3,7 +3,14 @@ use crate::error::{VirtioError, VirtioResult};
 use alloc::sync::Arc;
 use axaddrspace::{GuestMemoryAccessor, GuestPhysAddr};
 
-/// VirtIO used ring element
+/// VirtIO used ring element structure.
+/// 
+/// This structure represents the memory layout of a single element in the
+/// used ring array according to the VirtIO specification. Each element
+/// records information about a completed descriptor chain.
+/// 
+/// This structure is used by `UsedRing` to read/write individual used
+/// elements in guest memory through the guest memory accessor.
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct VirtqUsedElem {
@@ -20,7 +27,19 @@ impl VirtqUsedElem {
     }
 }
 
-/// VirtIO used ring structure
+/// VirtIO used ring header structure.
+/// 
+/// This structure represents the memory layout of the used ring header
+/// in guest memory according to the VirtIO specification. It is a simple
+/// C-compatible data structure that directly maps to guest memory.
+/// 
+/// The complete used ring in guest memory consists of:
+/// 1. This header structure (VirtQueueUsed)
+/// 2. An array of used elements (ring[queue_size], each VirtqUsedElem)
+/// 3. An optional avail_event field (if VIRTIO_F_EVENT_IDX is negotiated)
+/// 
+/// This structure is used by `UsedRing` to read/write the header portion
+/// of the used ring through guest memory accessor.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default)]
 pub struct VirtQueueUsed {
@@ -52,7 +71,34 @@ impl VirtQueueUsed {
     }
 }
 
-/// Used ring management
+/// Used ring management structure.
+/// 
+/// This structure provides a high-level interface for managing the VirtIO
+/// used ring in guest memory. It wraps the guest memory accessor and
+/// provides methods to read/write various parts of the used ring:
+/// - The header (VirtQueueUsed structure)
+/// - The ring array of used elements (VirtqUsedElem structures)
+/// - The avail_event field (if VIRTIO_F_EVENT_IDX is negotiated)
+/// 
+/// Relationship with VirtQueueUsed and VirtqUsedElem:
+/// - VirtQueueUsed defines the memory layout of the used ring header
+/// - VirtqUsedElem defines the memory layout of each ring element
+/// - UsedRing uses both structures to access the complete used ring in guest memory
+/// - UsedRing manages the entire used ring structure and provides high-level operations
+/// 
+/// Memory Layout:
+/// ```text
+/// base_addr -> +-------------------+
+///              | VirtQueueUsed     |  (flags + idx)
+///              +-------------------+
+///              | ring[0]           |  (VirtqUsedElem: id + len)
+///              | ring[1]           |  (VirtqUsedElem: id + len)
+///              | ...               |
+///              | ring[queue_size-1]|  (VirtqUsedElem: id + len)
+///              +-------------------+
+///              | avail_event       |  (optional, if event_idx enabled)
+///              +-------------------+
+/// ```
 #[derive(Debug, Clone)]
 pub struct UsedRing<T: GuestMemoryAccessor + Clone> {
     /// Base address of the used ring

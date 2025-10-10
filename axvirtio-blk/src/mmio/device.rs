@@ -2,15 +2,49 @@ use alloc::{sync::Arc, vec::Vec};
 use axaddrspace::GuestMemoryAccessor;
 use axaddrspace::{device::AccessWidth, GuestPhysAddr};
 
+use axvirtio_common::mmio::transport;
 use spin::Mutex;
 
 use crate::block::config::VirtioBlockConfig;
+use crate::block::request::BlockRequestResult;
 use crate::block::BlockRequest;
 use crate::constants::*;
 use crate::{backend::BlockBackend, mmio::VirtioBlockHeader};
-use axvirtio_common::{MmioTransport, VirtioConfig, VirtioError, VirtioQueue, VirtioResult};
+use axvirtio_common::{
+    VirtioConfig, VirtioDeviceID, VirtioError, VirtioQueue, VirtioResult,
+};
 
-/// VirtIO MMIO device state
+/// VirtIO MMIO Block Device
+/// 
+/// This is a complete VirtIO MMIO block device implementation that follows the VirtIO 1.1 specification.
+/// The device communicates with guest drivers through MMIO interface and provides virtualized block storage services.
+/// 
+/// # VirtIO MMIO Protocol Overview
+/// - The device communicates with drivers through Memory-Mapped I/O (MMIO) registers
+/// - Uses ring buffers (virtqueue) for efficient data transfer
+/// - Supports feature negotiation mechanism, allowing drivers and devices to negotiate supported features
+/// - Employs producer-consumer model for I/O request processing
+/// 
+/// # Architecture
+/// ```
+/// Guest Driver <--MMIO--> VirtIO Device <--Backend--> Storage
+///      |                      |                        |
+///   virtqueue              Ring Buffers            Block Backend
+/// ```
+/// 
+/// # Generic Parameters
+/// - `B`: Block backend implementation that handles actual storage operations
+/// - `T`: Guest memory accessor with address translation capabilities
+/// 
+/// # Thread Safety
+/// All fields are protected by appropriate synchronization primitives (Mutex, Arc)
+/// to ensure safe concurrent access from multiple threads.
+/// 
+/// # Memory Layout
+/// The device occupies a contiguous MMIO region starting at `base_ipa` with length `length`.
+/// The MMIO space is divided into:
+/// - Standard VirtIO MMIO registers (0x000-0x0FF)
+/// - Device-specific configuration space (0x100+)
 pub struct VirtioMmioBlockDevice<B: BlockBackend, T: GuestMemoryAccessor + Clone> {
     /// Base IPA address
     pub(crate) base_ipa: GuestPhysAddr,
@@ -56,9 +90,12 @@ impl<B: BlockBackend, T: GuestMemoryAccessor + Clone> VirtioMmioBlockDevice<B, T
         block_config: VirtioBlockConfig,
         translator: T,
     ) -> VirtioResult<Self> {
-        let mut config = VirtioConfig::new_block_device(base_ipa);
-        // Include block-specific feature bits in device features
-        config.device_features |= VIRTIO_BLK_FEATURES;
+        let config = VirtioConfig::new(
+            base_ipa,
+            VIRTIO_BLK_FEATURES,
+            DEFAULT_NUM_QUEUES,
+            VirtioDeviceID::Block,
+        );
         let mut queues = Vec::new();
         let accessor = Arc::new(translator);
 
@@ -113,7 +150,7 @@ impl<B: BlockBackend, T: GuestMemoryAccessor + Clone> VirtioMmioBlockDevice<B, T
         }
 
         let offset =
-            match MmioTransport::validate_read_access(addr, width, self.base_ipa, self.length) {
+            match transport::validate_read_access(addr, width, self.base_ipa, self.length) {
                 Ok(offset) => offset,
                 Err(_) => return Ok(0),
             };
@@ -196,7 +233,7 @@ impl<B: BlockBackend, T: GuestMemoryAccessor + Clone> VirtioMmioBlockDevice<B, T
         }
 
         let offset =
-            match MmioTransport::validate_write_access(addr, width, self.base_ipa, self.length) {
+            match transport::validate_write_access(addr, width, self.base_ipa, self.length) {
                 Ok(offset) => offset,
                 Err(_) => return Ok(()),
             };
@@ -571,9 +608,18 @@ impl<B: BlockBackend, T: GuestMemoryAccessor + Clone> VirtioMmioBlockDevice<B, T
 
     /// Execute a block request
     fn execute_block_request(&self, request: &BlockRequest<T>) -> VirtioResult<u8> {
-        // Execute the request using the backend
-        let status = request.execute(&self.backend)?;
-        Ok(status as u8)
+        match request.execute(&self.backend) {
+            Ok(status) => Ok(status as u8),
+            Err(e) => {
+                error!("Block request execution failed: {:?}", e);
+                let status = match e {
+                    VirtioError::InvalidBufferSize => BlockRequestResult::Unsupported,
+                    VirtioError::MemoryError => BlockRequestResult::IoError,
+                    _ => BlockRequestResult::IoError,
+                };
+                Ok(status as u8)
+            }
+        }
     }
 
     /// Add a used buffer to the used ring
@@ -709,7 +755,7 @@ impl<B: BlockBackend, T: GuestMemoryAccessor + Clone> VirtioMmioBlockDevice<B, T
     /// Read from device configuration space
     fn read_config_space(&self, offset: u64, width: AccessWidth) -> VirtioResult<usize> {
         // Validate access width - config space typically uses 32-bit accesses
-        MmioTransport::validate_access_width(width)?;
+        transport::validate_access_width(width)?;
 
         // Read from block device configuration based on VirtIO specification layout
         let value = match offset {

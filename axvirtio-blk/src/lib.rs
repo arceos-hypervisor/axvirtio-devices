@@ -62,7 +62,7 @@ mod constants;
 mod mmio;
 
 // Re-export from axvirtio-common
-pub use axvirtio_common::{MmioTransport, VirtioConfig, VirtioError, VirtioQueue, VirtioResult};
+pub use axvirtio_common::{VirtioConfig, VirtioError, VirtioQueue, VirtioResult};
 
 // Re-export device-specific types
 pub use backend::BlockBackend;

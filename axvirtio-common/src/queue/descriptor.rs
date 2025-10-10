@@ -4,7 +4,18 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 use axaddrspace::{GuestMemoryAccessor, GuestPhysAddr};
 
-/// VirtIO queue descriptor
+/// VirtIO queue descriptor structure.
+/// 
+/// This structure represents the memory layout of a single descriptor
+/// in the descriptor table according to the VirtIO specification. It is
+/// a C-compatible data structure that directly maps to guest memory.
+/// 
+/// Each descriptor describes a buffer in guest memory that can be used
+/// for device I/O operations. Descriptors can be chained together using
+/// the NEXT flag to describe scatter-gather buffers.
+/// 
+/// This structure is used by `DescriptorTable` to read/write individual
+/// descriptors in guest memory through the guest memory accessor.
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct VirtQueueDesc {
@@ -87,7 +98,34 @@ impl VirtQueueDesc {
     }
 }
 
-/// Descriptor table management
+/// Descriptor table management structure.
+/// 
+/// This structure provides a high-level interface for managing the VirtIO
+/// descriptor table in guest memory. It wraps the guest memory accessor and
+/// provides methods to read/write individual descriptors and follow descriptor
+/// chains.
+/// 
+/// Relationship with VirtQueueDesc:
+/// - VirtQueueDesc defines the memory layout of a single descriptor
+/// - DescriptorTable uses VirtQueueDesc to access descriptors in guest memory
+/// - DescriptorTable manages the entire descriptor table and provides operations
+///   for descriptor chains, validation, and buffer management
+/// 
+/// Memory Layout:
+/// ```text
+/// base_addr -> +-------------------+
+///              | VirtQueueDesc[0]  |  (addr + len + flags + next)
+///              +-------------------+
+///              | VirtQueueDesc[1]  |  (addr + len + flags + next)
+///              +-------------------+
+///              | ...               |
+///              +-------------------+
+///              | VirtQueueDesc[n-1]|  (addr + len + flags + next)
+///              +-------------------+
+/// ```
+/// 
+/// Descriptor chains are formed by setting the NEXT flag and the next field
+/// to link descriptors together, allowing scatter-gather I/O operations.
 #[derive(Debug, Clone)]
 pub struct DescriptorTable<T: GuestMemoryAccessor + Clone> {
     /// Base address of the descriptor table
