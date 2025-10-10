@@ -10,36 +10,34 @@ use crate::block::request::BlockRequestResult;
 use crate::block::BlockRequest;
 use crate::constants::*;
 use crate::{backend::BlockBackend, mmio::VirtioBlockHeader};
-use axvirtio_common::{
-    VirtioConfig, VirtioDeviceID, VirtioError, VirtioQueue, VirtioResult,
-};
+use axvirtio_common::{VirtioConfig, VirtioDeviceID, VirtioError, VirtioQueue, VirtioResult};
 
 /// VirtIO MMIO Block Device
-/// 
+///
 /// This is a complete VirtIO MMIO block device implementation that follows the VirtIO 1.1 specification.
 /// The device communicates with guest drivers through MMIO interface and provides virtualized block storage services.
-/// 
+///
 /// # VirtIO MMIO Protocol Overview
 /// - The device communicates with drivers through Memory-Mapped I/O (MMIO) registers
 /// - Uses ring buffers (virtqueue) for efficient data transfer
 /// - Supports feature negotiation mechanism, allowing drivers and devices to negotiate supported features
 /// - Employs producer-consumer model for I/O request processing
-/// 
+///
 /// # Architecture
 /// ```
 /// Guest Driver <--MMIO--> VirtIO Device <--Backend--> Storage
 ///      |                      |                        |
 ///   virtqueue              Ring Buffers            Block Backend
 /// ```
-/// 
+///
 /// # Generic Parameters
 /// - `B`: Block backend implementation that handles actual storage operations
 /// - `T`: Guest memory accessor with address translation capabilities
-/// 
+///
 /// # Thread Safety
 /// All fields are protected by appropriate synchronization primitives (Mutex, Arc)
 /// to ensure safe concurrent access from multiple threads.
-/// 
+///
 /// # Memory Layout
 /// The device occupies a contiguous MMIO region starting at `base_ipa` with length `length`.
 /// The MMIO space is divided into:
@@ -149,11 +147,11 @@ impl<B: BlockBackend, T: GuestMemoryAccessor + Clone> VirtioMmioBlockDevice<B, T
             return Ok(0);
         }
 
-        let offset =
-            match transport::validate_read_access(addr, width, self.base_ipa, self.length) {
-                Ok(offset) => offset,
-                Err(_) => return Ok(0),
-            };
+        let offset = match transport::validate_read_access(addr, width, self.base_ipa, self.length)
+        {
+            Ok(offset) => offset,
+            Err(_) => return Ok(0),
+        };
 
         let value = match offset {
             VIRTIO_MMIO_MAGIC_VALUE => MMIO_MAGIC_VALUE,
@@ -232,11 +230,11 @@ impl<B: BlockBackend, T: GuestMemoryAccessor + Clone> VirtioMmioBlockDevice<B, T
             return Ok(());
         }
 
-        let offset =
-            match transport::validate_write_access(addr, width, self.base_ipa, self.length) {
-                Ok(offset) => offset,
-                Err(_) => return Ok(()),
-            };
+        let offset = match transport::validate_write_access(addr, width, self.base_ipa, self.length)
+        {
+            Ok(offset) => offset,
+            Err(_) => return Ok(()),
+        };
         let val = val as u32;
 
         match offset {
