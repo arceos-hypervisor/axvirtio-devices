@@ -24,7 +24,7 @@ use axvirtio_common::{VirtioConfig, VirtioDeviceID, VirtioError, VirtioQueue, Vi
 /// - Employs producer-consumer model for I/O request processing
 ///
 /// # Architecture
-/// ```
+/// ```text
 /// Guest Driver <--MMIO--> VirtIO Device <--Backend--> Storage
 ///      |                      |                        |
 ///   virtqueue              Ring Buffers            Block Backend
