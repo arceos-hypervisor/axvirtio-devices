@@ -1,13 +1,13 @@
 use alloc::{sync::Arc, vec::Vec};
 use axaddrspace::GuestMemoryAccessor;
-use axaddrspace::{device::AccessWidth, GuestPhysAddr};
+use axaddrspace::{GuestPhysAddr, device::AccessWidth};
 
 use axvirtio_common::mmio::transport;
 use spin::Mutex;
 
+use crate::block::BlockRequest;
 use crate::block::config::VirtioBlockConfig;
 use crate::block::request::BlockRequestResult;
-use crate::block::BlockRequest;
 use crate::constants::*;
 use crate::{backend::BlockBackend, mmio::VirtioBlockHeader};
 use axvirtio_common::{VirtioConfig, VirtioDeviceID, VirtioError, VirtioQueue, VirtioResult};
@@ -192,11 +192,7 @@ impl<B: BlockBackend, T: GuestMemoryAccessor + Clone> VirtioMmioBlockDevice<B, T
                 let queue_sel = *self.queue_sel.lock();
                 let queues = self.queues.lock();
                 if let Some(queue) = queues.get(queue_sel as usize) {
-                    if queue.ready {
-                        1
-                    } else {
-                        0
-                    }
+                    if queue.ready { 1 } else { 0 }
                 } else {
                     0
                 }
@@ -594,8 +590,7 @@ impl<B: BlockBackend, T: GuestMemoryAccessor + Clone> VirtioMmioBlockDevice<B, T
 
             trace!(
                 "Parsed VirtIO block header: type={}, sector={}",
-                header.request_type,
-                header.sector
+                header.request_type, header.sector
             );
 
             Ok(header)
@@ -624,9 +619,7 @@ impl<B: BlockBackend, T: GuestMemoryAccessor + Clone> VirtioMmioBlockDevice<B, T
     fn add_used_buffer(&self, queue: &VirtioQueue<T>, desc_index: u16, len: u32, status: u8) {
         trace!(
             "Completing request: desc_index={}, len={}, status={}",
-            desc_index,
-            len,
-            status
+            desc_index, len, status
         );
 
         // Write the status byte to the status buffer first

@@ -224,8 +224,7 @@ impl<T: GuestMemoryAccessor + Clone> BlockRequest<T> {
             Ok(bytes_written) => {
                 trace!(
                     "Wrote {} bytes to backend at sector {}",
-                    bytes_written,
-                    self.sector
+                    bytes_written, self.sector
                 );
                 Ok(BlockRequestResult::Ok)
             }

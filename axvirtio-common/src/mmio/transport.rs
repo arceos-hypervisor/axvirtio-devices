@@ -1,7 +1,7 @@
 /// MMIO transport layer utilities
-use axaddrspace::{device::AccessWidth, GuestPhysAddr};
+use axaddrspace::{GuestPhysAddr, device::AccessWidth};
 
-use crate::{error::VirtioError, VirtioResult, VIRTIO_MMIO_CONFIG_OFFSET};
+use crate::{VIRTIO_MMIO_CONFIG_OFFSET, VirtioResult, error::VirtioError};
 
 /// Macro to handle bytes-to-value conversion for different access widths
 macro_rules! convert_bytes_to_value {

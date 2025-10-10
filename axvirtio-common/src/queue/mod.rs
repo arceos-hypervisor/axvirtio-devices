@@ -8,8 +8,8 @@ use log::trace;
 pub use used::{UsedRing, VirtQueueUsed, VirtqUsedElem};
 
 use crate::{
-    error::{VirtioError, VirtioResult},
     VirtioDeviceID,
+    error::{VirtioError, VirtioResult},
 };
 use alloc::{sync::Arc, vec::Vec};
 use axaddrspace::{GuestMemoryAccessor, GuestPhysAddr};
