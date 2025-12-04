@@ -15,7 +15,7 @@ repository = "https://github.com/arceos-hypervisor/axvirtio"
 edition = "2024"
 
 [workspace.dependencies]
-axvirtio-common = { path = "axvirtio-common" }
-axvirtio-blk = { path = "axvirtio-blk" }
+axvirtio-common = { version ="0.1.0", path = "axvirtio-common" }
+axvirtio-blk = { version ="0.1.0", path = "axvirtio-blk" }
 
 axaddrspace = "0.2.0"
