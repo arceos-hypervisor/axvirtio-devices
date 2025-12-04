@@ -18,4 +18,4 @@ edition = "2024"
 axvirtio-common = { path = "axvirtio-common" }
 axvirtio-blk = { path = "axvirtio-blk" }
 
-axaddrspace = "0.1.2"
+axaddrspace = "0.2.0"

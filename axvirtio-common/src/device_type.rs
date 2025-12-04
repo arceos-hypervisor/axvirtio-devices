@@ -1,10 +1,11 @@
 use core::fmt;
 
 /// VirtIO device types (simplified version)
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[repr(u32)]
 pub enum VirtioDeviceID {
     /// Invalid/Unknown device type
+    #[default]
     Invalid = 0,
 
     /// Network card device
@@ -70,11 +71,5 @@ impl From<usize> for VirtioDeviceID {
 impl fmt::Display for VirtioDeviceID {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{} ({})", self.name(), self.to_device_id())
-    }
-}
-
-impl Default for VirtioDeviceID {
-    fn default() -> Self {
-        Self::Invalid
     }
 }
