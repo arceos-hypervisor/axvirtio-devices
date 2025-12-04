@@ -45,6 +45,3 @@ impl Default for VirtioBlockConfig {
         }
     }
 }
-
-// Re-export constants for backward compatibility
-pub use crate::constants::{DEFAULT_CAPACITY_SECTORS, SECTOR_SIZE};

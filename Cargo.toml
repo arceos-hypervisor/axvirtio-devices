@@ -4,21 +4,18 @@ resolver = "2"
 members = [
     "axvirtio-common",
     "axvirtio-blk",
-    "axvirtio-net",
-    "axvirtio-console",
 ]
 
 [workspace.package]
 version = "0.1.0"
 authors = ["Debin <luodeb@outlook.com>"]
 license = "GPL-3.0-or-later OR Apache-2.0 OR MulanPSL-2.0"
-homepage = ""
-repository = ""
+homepage = "https://github.com/arceos-hypervisor/axvisor"
+repository = "https://github.com/arceos-hypervisor/axvirtio"
+edition = "2024"
 
 [workspace.dependencies]
 axvirtio-common = { path = "axvirtio-common" }
 axvirtio-blk = { path = "axvirtio-blk" }
-axvirtio-net = { path = "axvirtio-net" }
-axvirtio-console = { path = "axvirtio-console" }
 
-axaddrspace = { git = "https://github.com/arceos-hypervisor/axaddrspace.git" }
+axaddrspace = "0.2.0"

@@ -1,23 +1,32 @@
 use crate::constants::*;
 use crate::error::{VirtioError, VirtioResult};
+use alloc::sync::Arc;
+use axaddrspace::GuestMemoryAccessor;
 use axaddrspace::GuestPhysAddr;
 
-/// VirtIO available ring structure
+/// VirtIO available ring header structure.
 ///
-/// This is followed by:
-/// - ring[queue_size]: u16 array of descriptor indices
-/// - used_event: u16 (if event_idx feature is enabled)
+/// This structure represents the memory layout of the available ring header
+/// in guest memory according to the VirtIO specification. It is a simple
+/// C-compatible data structure that directly maps to guest memory.
+///
+/// The complete available ring in guest memory consists of:
+/// 1. This header structure (VirtQueueAvail)
+/// 2. An array of descriptor indices (ring[\queue_size])
+/// 3. An optional used_event field (if VIRTIO_F_EVENT_IDX is negotiated)
+///
+/// This structure is used by `AvailableRing` to read/write the header portion
+/// of the available ring through guest memory accessor.
 #[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub struct VirtqAvail {
+#[derive(Debug, Clone, Copy, Default)]
+pub struct VirtQueueAvail {
     /// Flags
     pub flags: u16,
     /// Index of the next available descriptor
     pub idx: u16,
-    // Ring of available descriptor indices (variable length)
 }
 
-impl VirtqAvail {
+impl VirtQueueAvail {
     /// Create a new available ring header
     pub fn new() -> Self {
         Self { flags: 0, idx: 0 }
@@ -38,24 +47,53 @@ impl VirtqAvail {
     }
 }
 
-/// Available ring management
+/// Available ring management structure.
+///
+/// This structure provides a high-level interface for managing the VirtIO
+/// available ring in guest memory. It wraps the guest memory accessor and
+/// provides methods to read/write various parts of the available ring:
+/// - The header (VirtQueueAvail structure)
+/// - The ring array of descriptor indices
+/// - The used_event field (if VIRTIO_F_EVENT_IDX is negotiated)
+///
+/// Relationship with VirtQueueAvail:
+/// - VirtQueueAvail defines the memory layout of the available ring header
+/// - AvailableRing uses VirtQueueAvail to access the header in guest memory
+/// - AvailableRing manages the entire available ring structure, not just the header
+///
+/// Memory Layout:
+/// ```text
+/// base_addr -> +-------------------+
+///              | VirtQueueAvail    |  (flags + idx)
+///              +-------------------+
+///              | ring[0]           |  (descriptor index)
+///              | ring[1]           |
+///              | ...               |
+///              | ring[queue_size-1]|
+///              +-------------------+
+///              | used_event        |  (optional, if event_idx enabled)
+///              +-------------------+
+/// ```
 #[derive(Debug, Clone)]
-pub struct AvailableRing {
+pub struct AvailableRing<T: GuestMemoryAccessor + Clone> {
     /// Base address of the available ring
     pub base_addr: GuestPhysAddr,
     /// Queue size
     pub size: u16,
     /// Last seen available index
     pub last_avail_idx: u16,
+    /// Guest memory accessor
+    accessor: Arc<T>,
 }
 
-impl AvailableRing {
+impl<T: GuestMemoryAccessor + Clone> AvailableRing<T> {
     /// Create a new available ring
-    pub fn new(base_addr: GuestPhysAddr, size: u16) -> Self {
+    pub fn new(base_addr: GuestPhysAddr, size: u16, accessor: Arc<T>) -> Self {
         Self {
             base_addr,
             size,
             last_avail_idx: 0,
+            accessor,
         }
     }
 
@@ -66,7 +104,7 @@ impl AvailableRing {
 
     /// Get the address of the ring array
     pub fn ring_addr(&self) -> GuestPhysAddr {
-        self.base_addr + core::mem::size_of::<VirtqAvail>()
+        self.base_addr + core::mem::size_of::<VirtQueueAvail>()
     }
 
     /// Get the address of a specific ring entry
@@ -75,19 +113,19 @@ impl AvailableRing {
             return None;
         }
 
-        let offset = core::mem::size_of::<VirtqAvail>() + (index as usize * 2);
+        let offset = core::mem::size_of::<VirtQueueAvail>() + (index as usize * 2);
         Some(self.base_addr + offset)
     }
 
     /// Get the address of the used event field (if event_idx is enabled)
     pub fn used_event_addr(&self) -> GuestPhysAddr {
-        let offset = core::mem::size_of::<VirtqAvail>() + (self.size as usize * 2);
+        let offset = core::mem::size_of::<VirtQueueAvail>() + (self.size as usize * 2);
         self.base_addr + offset
     }
 
     /// Calculate the total size of the available ring
     pub fn total_size(&self) -> usize {
-        core::mem::size_of::<VirtqAvail>() + (self.size as usize * 2) + 2
+        core::mem::size_of::<VirtQueueAvail>() + (self.size as usize * 2) + 2
     }
 
     /// Check if the available ring is valid
@@ -106,29 +144,25 @@ impl AvailableRing {
     }
 
     /// Read the available ring header
-    pub fn read_avail_header(&self) -> VirtioResult<VirtqAvail> {
+    pub fn read_avail_header(&self) -> VirtioResult<VirtQueueAvail> {
         if !self.is_valid() {
             return Err(VirtioError::QueueNotReady);
         }
 
-        unsafe {
-            let header_ptr = self.base_addr.as_usize() as *const VirtqAvail;
-            Ok(core::ptr::read_volatile(header_ptr))
-        }
+        self.accessor
+            .read_obj(self.base_addr)
+            .map_err(|_| VirtioError::InvalidAddress)
     }
 
     /// Write the available ring header
-    pub fn write_avail_header(&self, header: &VirtqAvail) -> VirtioResult<()> {
+    pub fn write_avail_header(&self, header: &VirtQueueAvail) -> VirtioResult<()> {
         if !self.is_valid() {
             return Err(VirtioError::QueueNotReady);
         }
 
-        unsafe {
-            let header_ptr = self.base_addr.as_usize() as *mut VirtqAvail;
-            core::ptr::write_volatile(header_ptr, *header);
-        }
-
-        Ok(())
+        self.accessor
+            .write_obj(self.base_addr, header)
+            .map_err(|_| VirtioError::InvalidAddress)
     }
 
     /// Read the current available index from guest memory
@@ -139,10 +173,9 @@ impl AvailableRing {
 
         // Read the idx field from the header (offset 2 bytes for flags)
         let idx_addr = self.base_addr + 2;
-        unsafe {
-            let idx_ptr = idx_addr.as_usize() as *const u16;
-            Ok(core::ptr::read_volatile(idx_ptr))
-        }
+        self.accessor
+            .read_obj(idx_addr)
+            .map_err(|_| VirtioError::InvalidAddress)
     }
 
     /// Get the available index for external access
@@ -160,10 +193,9 @@ impl AvailableRing {
             .ring_entry_addr(ring_index % self.size)
             .ok_or(VirtioError::InvalidQueue)?;
 
-        unsafe {
-            let entry_ptr = entry_addr.as_usize() as *const u16;
-            Ok(core::ptr::read_volatile(entry_ptr))
-        }
+        self.accessor
+            .read_obj(entry_addr)
+            .map_err(|_| VirtioError::InvalidAddress)
     }
 
     /// Write a descriptor index to the available ring
@@ -176,10 +208,9 @@ impl AvailableRing {
             .ring_entry_addr(ring_index % self.size)
             .ok_or(VirtioError::InvalidQueue)?;
 
-        unsafe {
-            let entry_ptr = entry_addr.as_usize() as *mut u16;
-            core::ptr::write_volatile(entry_ptr, desc_index);
-        }
+        self.accessor
+            .write_obj(entry_addr, desc_index)
+            .map_err(|_| VirtioError::InvalidAddress)?;
 
         Ok(())
     }
@@ -211,10 +242,9 @@ impl AvailableRing {
         }
 
         let event_addr = self.used_event_addr();
-        unsafe {
-            let event_ptr = event_addr.as_usize() as *const u16;
-            Ok(core::ptr::read_volatile(event_ptr))
-        }
+        self.accessor
+            .read_obj(event_addr)
+            .map_err(|_| VirtioError::InvalidAddress)
     }
 
     /// Write the used event field (for event_idx feature)
@@ -224,11 +254,8 @@ impl AvailableRing {
         }
 
         let event_addr = self.used_event_addr();
-        unsafe {
-            let event_ptr = event_addr.as_usize() as *mut u16;
-            core::ptr::write_volatile(event_ptr, event);
-        }
-
-        Ok(())
+        self.accessor
+            .write_obj(event_addr, event)
+            .map_err(|_| VirtioError::InvalidAddress)
     }
 }

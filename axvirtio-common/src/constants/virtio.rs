@@ -4,28 +4,6 @@
 //! device type or transport mechanism.
 
 // ============================================================================
-// VirtIO Device IDs
-// ============================================================================
-
-/// VirtIO Network Device ID
-pub const VIRTIO_DEVICE_ID_NET: u32 = 1;
-
-/// VirtIO Block Device ID
-pub const VIRTIO_DEVICE_ID_BLOCK: u32 = 2;
-
-/// VirtIO Console Device ID
-pub const VIRTIO_DEVICE_ID_CONSOLE: u32 = 3;
-
-/// VirtIO Random Number Generator Device ID
-pub const VIRTIO_DEVICE_ID_RNG: u32 = 4;
-
-/// VirtIO Balloon Device ID
-pub const VIRTIO_DEVICE_ID_BALLOON: u32 = 5;
-
-/// VirtIO GPU Device ID
-pub const VIRTIO_DEVICE_ID_GPU: u32 = 16;
-
-// ============================================================================
 // VirtIO Vendor IDs
 // ============================================================================
 

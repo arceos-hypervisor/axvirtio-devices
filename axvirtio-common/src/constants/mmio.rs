@@ -77,7 +77,7 @@ pub const VIRTIO_MMIO_QUEUE_USED_HIGH: usize = 0x0a4;
 pub const VIRTIO_MMIO_CONFIG_GENERATION: usize = 0x0fc;
 
 /// Configuration space start offset
-pub const VIRTIO_MMIO_CONFIG: usize = 0x100;
+pub const VIRTIO_MMIO_CONFIG_OFFSET: usize = 0x100;
 
 // ============================================================================
 // VirtIO MMIO Magic Values and Versions
