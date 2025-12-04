@@ -1,0 +1,45 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="AxVirtIO Block Device Library"><title>axvirtio_blk - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../static.files/rustdoc-ca0dd0c4.css"><meta name="rustdoc-vars" data-root-path="../" data-static-root-path="../static.files/" data-current-crate="axvirtio_blk" data-themes="" data-resource-suffix="" data-rustdoc-version="1.93.0-nightly (83e49b75e 2025-12-03)" data-channel="nightly" data-search-js="search-9e2438ea.js" data-stringdex-js="stringdex-a3946164.js" data-settings-js="settings-c38705f0.js" ><script src="../static.files/storage-e2aeef58.js"></script><script defer src="../crates.js"></script><script defer src="../static.files/main-a410ff4d.js"></script><noscript><link rel="stylesheet" href="../static.files/noscript-263c88ec.css"></noscript><link rel="alternate icon" type="image/png" href="../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../static.files/favicon-044be391.svg"></head><body class="rustdoc mod crate"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><rustdoc-topbar><h2><a href="#">Crate axvirtio_blk</a></h2></rustdoc-topbar><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../axvirtio_blk/index.html">axvirtio_<wbr>blk</a><span class="version">0.1.0</span></h2></div><div class="sidebar-elems"><ul class="block"><li><a id="all-types" href="all.html">All Items</a></li></ul><section id="rustdoc-toc"><h3><a href="#">Sections</a></h3><ul class="block top-toc"><li><a href="#axvirtio-block-device-library" title="AxVirtIO Block Device Library">AxVirtIO Block Device Library</a><ul><li><a href="#features" title="Features">Features</a></li><li><a href="#usage" title="Usage">Usage</a></li></ul></li></ul><h3><a href="#structs">Crate Items</a></h3><ul class="block"><li><a href="#structs" title="Structs">Structs</a></li><li><a href="#enums" title="Enums">Enums</a></li><li><a href="#traits" title="Traits">Traits</a></li><li><a href="#types" title="Type Aliases">Type Aliases</a></li></ul></section><div id="rustdoc-modnav"></div></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><div class="width-limiter"><section id="main-content" class="content"><div class="main-heading"><h1>Crate <span>axvirtio_<wbr>blk</span>&nbsp;<button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../src/axvirtio_blk/lib.rs.html#1-70">Source</a> </span></div><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><h2 id="axvirtio-block-device-library"><a class="doc-anchor" href="#axvirtio-block-device-library">§</a>AxVirtIO Block Device Library</h2>
+<p>This crate provides a VirtIO block device implementation for the AxVirtIO framework.
+It includes MMIO transport, block device backend traits, and request handling
+for VirtIO block devices according to the VirtIO specification.</p>
+<h3 id="features"><a class="doc-anchor" href="#features">§</a>Features</h3>
+<ul>
+<li>VirtIO block device MMIO implementation</li>
+<li>Pluggable block backend support</li>
+<li>Guest memory access abstraction</li>
+<li>VirtIO queue management for block operations</li>
+</ul>
+<h3 id="usage"><a class="doc-anchor" href="#usage">§</a>Usage</h3>
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>axvirtio_blk::{VirtioMmioBlockDevice, BlockBackend, VirtioBlockConfig, VirtioResult};
+<span class="kw">use </span>axaddrspace::GuestMemoryAccessor;
+<span class="kw">use </span>axaddrspace::GuestPhysAddr;
+<span class="kw">use </span>memory_addr::PhysAddr;
+
+<span class="comment">// Implement your block backend
+</span><span class="kw">struct </span>MyBlockBackend;
+<span class="kw">impl </span>BlockBackend <span class="kw">for </span>MyBlockBackend {
+    <span class="kw">fn </span>read(<span class="kw-2">&amp;</span><span class="self">self</span>, _sector: u64, _buffer: <span class="kw-2">&amp;mut </span>[u8]) -&gt; VirtioResult&lt;usize&gt; {
+        <span class="prelude-val">Ok</span>(<span class="number">0</span>)
+    }
+    <span class="kw">fn </span>write(<span class="kw-2">&amp;</span><span class="self">self</span>, _sector: u64, _buffer: <span class="kw-2">&amp;</span>[u8]) -&gt; VirtioResult&lt;usize&gt; {
+        <span class="prelude-val">Ok</span>(<span class="number">0</span>)
+    }
+    <span class="kw">fn </span>flush(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; VirtioResult&lt;()&gt; {
+        <span class="prelude-val">Ok</span>(())
+    }
+}
+
+<span class="attr">#[derive(Clone)]
+</span><span class="kw">struct </span>MyTranslator;
+<span class="kw">impl </span>GuestMemoryAccessor <span class="kw">for </span>MyTranslator {
+    <span class="kw">fn </span>translate_and_get_limit(<span class="kw-2">&amp;</span><span class="self">self</span>, guest_addr: GuestPhysAddr) -&gt; <span class="prelude-ty">Option</span>&lt;(PhysAddr, usize)&gt; {
+        <span class="prelude-val">None
+    </span>}
+}
+
+<span class="comment">// Create and use the VirtIO block device
+</span><span class="kw">let </span>backend = MyBlockBackend;
+<span class="kw">let </span>translator = MyTranslator;
+<span class="kw">let </span>block_config = VirtioBlockConfig::default();
+<span class="kw">let </span>device = VirtioMmioBlockDevice::new(GuestPhysAddr::from(<span class="number">0x0a000000</span>), <span class="number">0x200</span>, backend, block_config, translator);</code></pre></div></div></details><h2 id="structs" class="section-header">Structs<a href="#structs" class="anchor">§</a></h2><dl class="item-table"><dt><a class="struct" href="struct.VirtioBlockConfig.html" title="struct axvirtio_blk::VirtioBlockConfig">Virtio<wbr>Block<wbr>Config</a></dt><dd>VirtIO Block Device Configuration
+Layout according to VirtIO specification</dd><dt><a class="struct" href="struct.VirtioConfig.html" title="struct axvirtio_blk::VirtioConfig">Virtio<wbr>Config</a></dt><dd>Configuration for VirtIO devices with device index mapping</dd><dt><a class="struct" href="struct.VirtioMmioBlockDevice.html" title="struct axvirtio_blk::VirtioMmioBlockDevice">Virtio<wbr>Mmio<wbr>Block<wbr>Device</a></dt><dd>VirtIO MMIO Block Device</dd><dt><a class="struct" href="struct.VirtioQueue.html" title="struct axvirtio_blk::VirtioQueue">Virtio<wbr>Queue</a></dt><dd>VirtIO queue implementation</dd></dl><h2 id="enums" class="section-header">Enums<a href="#enums" class="anchor">§</a></h2><dl class="item-table"><dt><a class="enum" href="enum.VirtioError.html" title="enum axvirtio_blk::VirtioError">Virtio<wbr>Error</a></dt><dd>VirtIO specific error types</dd></dl><h2 id="traits" class="section-header">Traits<a href="#traits" class="anchor">§</a></h2><dl class="item-table"><dt><a class="trait" href="trait.BlockBackend.html" title="trait axvirtio_blk::BlockBackend">Block<wbr>Backend</a></dt><dd>Trait for block device backends</dd></dl><h2 id="types" class="section-header">Type Aliases<a href="#types" class="anchor">§</a></h2><dl class="item-table"><dt><a class="type" href="type.VirtioResult.html" title="type axvirtio_blk::VirtioResult">Virtio<wbr>Result</a></dt><dd>Result type for VirtIO operations</dd></dl></section></div></main></body></html>

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"struct":["AvailableRing","DescriptorTable","UsedRing","VirtQueueAvail","VirtQueueDesc","VirtQueueUsed","VirtioQueue","VirtqUsedElem"]};

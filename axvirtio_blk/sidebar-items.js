@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["VirtioError"],"struct":["VirtioBlockConfig","VirtioConfig","VirtioMmioBlockDevice","VirtioQueue"],"trait":["BlockBackend"],"type":["VirtioResult"]};
