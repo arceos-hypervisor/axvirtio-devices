@@ -150,6 +150,50 @@ impl<T: GuestMemoryAccessor + Clone> UsedRing<T> {
         self.base_addr + offset
     }
 
+    /// Write the avail_event field to tell guest when to send notifications
+    ///
+    /// According to VirtIO spec section 2.6.8, when EVENT_IDX is enabled:
+    /// - Device writes avail_event to used ring
+    /// - Guest checks: notify if (new_avail - avail_event - 1) < (new_avail - old_avail)
+    /// - Setting avail_event to current avail_idx tells guest to notify on next request
+    pub fn write_avail_event(&self, event: u16) -> VirtioResult<()> {
+        if !self.is_valid() {
+            return Err(VirtioError::QueueNotReady);
+        }
+
+        let event_addr = self.avail_event_addr();
+        trace!(
+            "[UsedRing] Writing avail_event {} to addr {:#x}",
+            event,
+            event_addr.as_usize()
+        );
+
+        self.accessor
+            .write_obj(event_addr, event)
+            .map_err(|_| VirtioError::InvalidAddress)?;
+
+        // Memory barrier to ensure write is visible
+        core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+        #[cfg(target_arch = "riscv64")]
+        unsafe {
+            core::arch::asm!("fence rw, rw");
+        }
+
+        Ok(())
+    }
+
+    /// Read the avail_event field
+    pub fn read_avail_event(&self) -> VirtioResult<u16> {
+        if !self.is_valid() {
+            return Err(VirtioError::QueueNotReady);
+        }
+
+        let event_addr = self.avail_event_addr();
+        self.accessor
+            .read_obj(event_addr)
+            .map_err(|_| VirtioError::InvalidAddress)
+    }
+
     /// Calculate the total size of the used ring
     pub fn total_size(&self) -> usize {
         core::mem::size_of::<VirtQueueUsed>()
@@ -178,15 +222,49 @@ impl<T: GuestMemoryAccessor + Clone> UsedRing<T> {
         let used_elem = VirtqUsedElem::new(id, len);
 
         // Write the used element to guest memory using injected memory accessor
+        trace!(
+            "[UsedRing] Writing used element to addr {:#x}: id={}, len={}",
+            elem_addr.as_usize(),
+            id,
+            len
+        );
         self.accessor
             .write_obj(elem_addr, used_elem)
             .map_err(|_| VirtioError::InvalidAddress)?;
+
+        // Verify the used element write by reading back
+        let readback_elem: VirtqUsedElem = self
+            .accessor
+            .read_obj(elem_addr)
+            .map_err(|_| VirtioError::InvalidAddress)?;
+        trace!(
+            "[UsedRing] Verified used element: id={}, len={} (expected id={}, len={})",
+            readback_elem.id, readback_elem.len, id, len
+        );
+        if readback_elem.id != id || readback_elem.len != len {
+            error!("[UsedRing] MISMATCH in used element write!");
+        }
+
+        // CRITICAL: Memory barrier BEFORE updating used_idx
+        // VirtIO spec requires that the device ensures all used ring element writes
+        // are visible before updating the used_idx. This ensures the guest driver
+        // sees the correct element data when it observes the updated idx.
+        core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+        #[cfg(target_arch = "riscv64")]
+        unsafe {
+            core::arch::asm!("fence rw, rw");
+        }
 
         // Update the used index
         self.used_idx = self.used_idx.wrapping_add(1);
 
         // Update the used ring header index
         self.write_used_idx()?;
+
+        trace!(
+            "[UsedRing] Added used entry: id={}, len={}, new_used_idx={}",
+            id, len, self.used_idx
+        );
 
         Ok(())
     }
@@ -199,9 +277,40 @@ impl<T: GuestMemoryAccessor + Clone> UsedRing<T> {
 
         // Write the used index to the header (offset 2 bytes for flags)
         let idx_addr = self.base_addr + 2;
+
+        trace!(
+            "[UsedRing] Writing used_idx {} to addr {:#x}",
+            self.used_idx,
+            idx_addr.as_usize()
+        );
+
         self.accessor
             .write_obj(idx_addr, self.used_idx)
             .map_err(|_| VirtioError::InvalidAddress)?;
+
+        // RISC-V fence to ensure write is visible
+        #[cfg(target_arch = "riscv64")]
+        unsafe {
+            core::arch::asm!("fence rw, rw");
+        }
+
+        // Verify the write by reading back
+        let readback: u16 = self
+            .accessor
+            .read_obj(idx_addr)
+            .map_err(|_| VirtioError::InvalidAddress)?;
+
+        trace!(
+            "[UsedRing] Verified used_idx write: wrote={}, readback={}",
+            self.used_idx, readback
+        );
+
+        if readback != self.used_idx {
+            error!(
+                "[UsedRing] MISMATCH! Expected used_idx={}, got {}",
+                self.used_idx, readback
+            );
+        }
 
         Ok(())
     }

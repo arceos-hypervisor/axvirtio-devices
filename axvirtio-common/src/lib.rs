@@ -6,6 +6,8 @@
 
 #![no_std]
 
+#[macro_use]
+extern crate log;
 extern crate alloc;
 
 /// Re-export commonly used modules

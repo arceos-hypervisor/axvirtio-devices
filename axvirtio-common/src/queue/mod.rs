@@ -43,8 +43,12 @@ pub struct VirtioQueue<T: GuestMemoryAccessor + Clone> {
     next_avail: u16,
     /// Next used index
     next_used: u16,
-    /// Event index enabled
+    /// Event index enabled (VIRTIO_F_RING_EVENT_IDX)
     pub event_idx_enabled: bool,
+    /// Last used index when we signalled an interrupt (for EVENT_IDX)
+    signalled_used: u16,
+    /// Whether signalled_used is valid (have we ever signalled?)
+    signalled_used_valid: bool,
 }
 
 impl<T: GuestMemoryAccessor + Clone> VirtioQueue<T> {
@@ -65,6 +69,8 @@ impl<T: GuestMemoryAccessor + Clone> VirtioQueue<T> {
             next_avail: 0,
             next_used: 0,
             event_idx_enabled: false,
+            signalled_used: 0,
+            signalled_used_valid: false,
         }
     }
 
@@ -113,9 +119,33 @@ impl<T: GuestMemoryAccessor + Clone> VirtioQueue<T> {
         Ok(())
     }
 
-    /// Mark queue as ready
+    /// Mark queue as ready and initialize used ring in guest memory
     pub fn set_ready(&mut self, ready: bool) {
         self.ready = ready;
+
+        // When queue becomes ready, initialize used ring in guest memory
+        if ready {
+            if let Some(ref used_ring) = self.used_ring {
+                // Initialize used_ring->flags to 0 (no notification suppression)
+                // This is critical for non-EVENT_IDX mode (flags mode)
+                if let Err(e) = used_ring.write_used_header(&VirtQueueUsed::new()) {
+                    log::warn!(
+                        "[VirtioQueue] Failed to initialize used ring header: {:?}",
+                        e
+                    );
+                }
+                // Initialize avail_event to 0 for EVENT_IDX mode
+                if self.event_idx_enabled {
+                    if let Err(e) = used_ring.write_avail_event(0) {
+                        log::warn!("[VirtioQueue] Failed to initialize avail_event: {:?}", e);
+                    }
+                }
+                log::info!(
+                    "[VirtioQueue] Queue {} initialized: used_ring flags=0, idx=0",
+                    self.index
+                );
+            }
+        }
     }
 
     /// Check if queue is valid and ready
@@ -137,6 +167,9 @@ impl<T: GuestMemoryAccessor + Clone> VirtioQueue<T> {
         self.desc_table = None;
         self.avail_ring = None;
         self.used_ring = None;
+        self.event_idx_enabled = false;
+        self.signalled_used = 0;
+        self.signalled_used_valid = false;
     }
 
     /// Read available ring index
@@ -260,13 +293,84 @@ impl<T: GuestMemoryAccessor + Clone> VirtioQueue<T> {
         }
     }
 
-    /// Check if should notify
-    pub fn should_notify(&self) -> VirtioResult<bool> {
-        if let Some(ref used_ring) = self.used_ring {
-            used_ring.should_notify()
+    /// Check if should notify (send interrupt to guest)
+    ///
+    /// According to VirtIO spec section 2.6.8:
+    /// - If VIRTIO_F_RING_EVENT_IDX is NOT negotiated: check avail->flags for
+    ///   VIRTQ_AVAIL_F_NO_INTERRUPT. If set, don't send interrupt.
+    /// - If VIRTIO_F_RING_EVENT_IDX IS negotiated: check used_event from avail ring.
+    ///   Device should notify if: (u16)(new - used_event - 1) < (u16)(new - old)
+    ///   where new is current used_idx, old is used_idx when we last signalled.
+    pub fn should_notify(&mut self) -> VirtioResult<bool> {
+        // Get current used index
+        let new_idx = if let Some(ref used_ring) = self.used_ring {
+            used_ring.get_used_idx()
         } else {
-            Err(VirtioError::QueueNotReady)
+            return Err(VirtioError::QueueNotReady);
+        };
+
+        if self.event_idx_enabled {
+            // EVENT_IDX mode: check used_event threshold
+            if let Some(ref avail_ring) = self.avail_ring {
+                let used_event = avail_ring.read_used_event()?;
+                let old_idx = self.signalled_used;
+                let was_valid = self.signalled_used_valid;
+
+                // Update signalled_used for next time
+                self.signalled_used = new_idx;
+                self.signalled_used_valid = true;
+
+                // If we've never signalled, always notify
+                if !was_valid {
+                    log::trace!(
+                        "[VirtioQueue] should_notify (EVENT_IDX, first): new_idx={}, used_event={}, returning true",
+                        new_idx,
+                        used_event
+                    );
+                    return Ok(true);
+                }
+
+                // VirtIO spec formula: notify if (new - used_event - 1) < (new - old)
+                // This is true when we've "crossed" the used_event threshold
+                let should = new_idx.wrapping_sub(used_event).wrapping_sub(1)
+                    < new_idx.wrapping_sub(old_idx);
+
+                log::trace!(
+                    "[VirtioQueue] should_notify (EVENT_IDX): new_idx={}, old_idx={}, used_event={}, returning {}",
+                    new_idx,
+                    old_idx,
+                    used_event,
+                    should
+                );
+
+                Ok(should)
+            } else {
+                Err(VirtioError::QueueNotReady)
+            }
+        } else {
+            // Non-EVENT_IDX mode: check avail->flags for VIRTQ_AVAIL_F_NO_INTERRUPT
+            if let Some(ref avail_ring) = self.avail_ring {
+                let suppressed = avail_ring.interrupts_suppressed()?;
+                log::trace!(
+                    "[VirtioQueue] should_notify (flags): interrupts_suppressed={}, returning {}",
+                    suppressed,
+                    !suppressed
+                );
+                Ok(!suppressed)
+            } else {
+                Err(VirtioError::QueueNotReady)
+            }
         }
+    }
+
+    /// Set event index feature enabled/disabled
+    pub fn set_event_idx_enabled(&mut self, enabled: bool) {
+        self.event_idx_enabled = enabled;
+        if enabled {
+            // Reset signalled state when enabling
+            self.signalled_used_valid = false;
+        }
+        log::info!("[VirtioQueue] event_idx_enabled set to {}", enabled);
     }
 
     /// Write status byte to the status buffer of a descriptor chain
@@ -278,7 +382,7 @@ impl<T: GuestMemoryAccessor + Clone> VirtioQueue<T> {
         let status_addr_guest = self.get_status_addr(head_index)?;
 
         trace!(
-            "Writing status byte {} to guest address 0x{:x} for descriptor chain {}",
+            "[VirtioQueue] Writing status byte {} to guest address 0x{:x} for descriptor chain {}",
             status,
             status_addr_guest.as_usize(),
             head_index
@@ -289,6 +393,43 @@ impl<T: GuestMemoryAccessor + Clone> VirtioQueue<T> {
             .write_obj(status_addr_guest, status)
             .map_err(|_| VirtioError::InvalidAddress)?;
 
+        // Verify the status byte was written correctly
+        let readback: u8 = self
+            .accessor
+            .read_obj(status_addr_guest)
+            .map_err(|_| VirtioError::InvalidAddress)?;
+        trace!(
+            "[VirtioQueue] Status byte verified: wrote={}, readback={}",
+            status, readback
+        );
+
         Ok(())
+    }
+
+    /// Write avail_event to used ring to tell guest when to send notifications
+    ///
+    /// When EVENT_IDX is enabled, the device should write avail_event to indicate
+    /// when the guest should send the next QUEUE_NOTIFY. Setting avail_event to
+    /// the current avail_idx tells the guest to notify on the next request.
+    pub fn write_avail_event(&self, event: u16) -> VirtioResult<()> {
+        if !self.event_idx_enabled {
+            // Only write avail_event when EVENT_IDX is enabled
+            return Ok(());
+        }
+
+        if let Some(ref used_ring) = self.used_ring {
+            used_ring.write_avail_event(event)
+        } else {
+            Err(VirtioError::QueueNotReady)
+        }
+    }
+
+    /// Read avail_event from used ring
+    pub fn read_avail_event(&self) -> VirtioResult<u16> {
+        if let Some(ref used_ring) = self.used_ring {
+            used_ring.read_avail_event()
+        } else {
+            Err(VirtioError::QueueNotReady)
+        }
     }
 }

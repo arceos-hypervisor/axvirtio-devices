@@ -145,8 +145,10 @@ impl<T: GuestMemoryAccessor + Clone> BlockRequest<T> {
         match backend.read(self.sector, &mut buffer) {
             Ok(bytes_read) => {
                 trace!(
-                    "Read {bytes_read} bytes from backend at sector {0}",
-                    self.sector
+                    "[BlockRequest] Read {} bytes from backend at sector {}, first 16 bytes: {:02x?}",
+                    bytes_read,
+                    self.sector,
+                    &buffer[..core::cmp::min(16, buffer.len())]
                 );
 
                 // Copy data to guest memory buffers
@@ -164,6 +166,11 @@ impl<T: GuestMemoryAccessor + Clone> BlockRequest<T> {
                     }
 
                     // Write data to guest memory using injected memory accessor
+                    trace!(
+                        "[BlockRequest] Writing {} bytes to guest addr {:#x}",
+                        end_offset - buffer_offset,
+                        guest_addr.as_usize()
+                    );
                     if let Err(e) = self
                         .accessor
                         .write_buffer(*guest_addr, &buffer[buffer_offset..end_offset])
@@ -171,6 +178,10 @@ impl<T: GuestMemoryAccessor + Clone> BlockRequest<T> {
                         error!("Failed to write data to guest memory: {:?}", e);
                         return Err(VirtioError::MemoryError);
                     }
+                    trace!(
+                        "[BlockRequest] Successfully wrote data to guest memory, first 16 bytes at offset 1024: {:02x?}",
+                        &buffer[1024..core::cmp::min(1040, buffer.len())]
+                    );
 
                     buffer_offset = end_offset;
                 }

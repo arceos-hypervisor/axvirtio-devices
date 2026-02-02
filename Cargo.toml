@@ -4,6 +4,7 @@ resolver = "2"
 members = [
     "axvirtio-common",
     "axvirtio-blk",
+    "axvirtio-console",
 ]
 
 [workspace.package]
@@ -17,5 +18,6 @@ edition = "2024"
 [workspace.dependencies]
 axvirtio-common = { version ="0.1.0", path = "axvirtio-common" }
 axvirtio-blk = { version ="0.1.0", path = "axvirtio-blk" }
+axvirtio-console = { version ="0.1.0", path = "axvirtio-console" }
 
 axaddrspace = "0.2.0"

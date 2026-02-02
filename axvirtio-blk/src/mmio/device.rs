@@ -134,6 +134,11 @@ impl<B: BlockBackend, T: GuestMemoryAccessor + Clone> VirtioMmioBlockDevice<B, T
         *self.status.lock() = status;
     }
 
+    /// Get interrupt status
+    pub fn get_interrupt_status(&self) -> u32 {
+        *self.interrupt_status.lock()
+    }
+
     /// Check if device is ready
     pub fn is_device_ready(&self) -> bool {
         let status = self.get_status();
@@ -197,7 +202,11 @@ impl<B: BlockBackend, T: GuestMemoryAccessor + Clone> VirtioMmioBlockDevice<B, T
                     0
                 }
             }
-            VIRTIO_MMIO_INTERRUPT_STATUS => *self.interrupt_status.lock(),
+            VIRTIO_MMIO_INTERRUPT_STATUS => {
+                let status = *self.interrupt_status.lock();
+                trace!("[VirtioBlkDev] INTERRUPT_STATUS read: {}", status);
+                status
+            }
             VIRTIO_MMIO_STATUS => *self.status.lock(),
             VIRTIO_MMIO_CONFIG_GENERATION => *self.config_generation.lock(),
             _ => {
@@ -243,12 +252,15 @@ impl<B: BlockBackend, T: GuestMemoryAccessor + Clone> VirtioMmioBlockDevice<B, T
                 match sel {
                     0 => {
                         *features = (*features & 0xFFFF_FFFF_0000_0000) | (val as u64);
+                        trace!("[VirtioBlkDev] DRIVER_FEATURES[0] = {:#x}", val);
                     }
                     1 => {
                         *features = (*features & 0x0000_0000_FFFF_FFFF) | ((val as u64) << 32);
+                        trace!("[VirtioBlkDev] DRIVER_FEATURES[1] = {:#x}", val);
                     }
                     _ => {} // Ignore invalid selector
                 }
+                trace!("[VirtioBlkDev] Negotiated features: {:#x}", *features);
             }
             VIRTIO_MMIO_DRIVER_FEATURES_SEL => {
                 *self.driver_features_sel.lock() = val;
@@ -278,8 +290,29 @@ impl<B: BlockBackend, T: GuestMemoryAccessor + Clone> VirtioMmioBlockDevice<B, T
                 self.handle_queue_notify(val as u16);
             }
             VIRTIO_MMIO_INTERRUPT_ACK => {
+                trace!("[VirtioBlkDev] INTERRUPT_ACK write: {}", val);
                 let mut interrupt_status = self.interrupt_status.lock();
                 *interrupt_status &= !val;
+                trace!(
+                    "[VirtioBlkDev] INTERRUPT_STATUS after ACK: {}",
+                    *interrupt_status
+                );
+
+                // Debug: check used_event after guest handles interrupt
+                let queues = self.queues.lock();
+                if let Some(queue) = queues.get(0) {
+                    if let Some(avail_ring) = queue.get_avail_ring() {
+                        if let Ok(used_event) = avail_ring.read_used_event() {
+                            trace!("[VirtioBlkDev] After ACK, used_event={}", used_event);
+                        }
+                    }
+                    if let Some(used_ring) = queue.get_used_ring() {
+                        trace!(
+                            "[VirtioBlkDev] After ACK, used_idx={}",
+                            used_ring.get_used_idx()
+                        );
+                    }
+                }
             }
             VIRTIO_MMIO_STATUS => {
                 self.handle_status_write(val);
@@ -348,6 +381,11 @@ impl<B: BlockBackend, T: GuestMemoryAccessor + Clone> VirtioMmioBlockDevice<B, T
 
     /// Handle queue notification
     fn handle_queue_notify(&self, queue_index: u16) {
+        trace!(
+            "[VirtioBlkDev] handle_queue_notify: queue_index={}",
+            queue_index
+        );
+
         // Check if device is ready
         if !self.is_device_ready() {
             warn!("Device not ready, ignoring queue notification");
@@ -369,6 +407,30 @@ impl<B: BlockBackend, T: GuestMemoryAccessor + Clone> VirtioMmioBlockDevice<B, T
                 }
             }
         }; // Lock is released here
+
+        trace!(
+            "[VirtioBlkDev] Queue {} ready, desc={:#x}, avail={:#x}, used={:#x}",
+            queue_index,
+            queue_copy.desc_table_addr.as_usize(),
+            queue_copy.avail_ring_addr.as_usize(),
+            queue_copy.used_ring_addr.as_usize()
+        );
+
+        // Debug: print used_event at the start of queue processing
+        if let Some(avail_ring) = queue_copy.get_avail_ring() {
+            if let Ok(used_event) = avail_ring.read_used_event() {
+                trace!(
+                    "[VirtioBlkDev] At QUEUE_NOTIFY start: used_event={}",
+                    used_event
+                );
+            }
+        }
+        if let Some(used_ring) = queue_copy.get_used_ring() {
+            trace!(
+                "[VirtioBlkDev] At QUEUE_NOTIFY start: used_idx={}",
+                used_ring.get_used_idx()
+            );
+        }
 
         // Check if queue addresses are set
         if queue_copy.desc_table_addr.as_usize() == 0
@@ -395,7 +457,7 @@ impl<B: BlockBackend, T: GuestMemoryAccessor + Clone> VirtioMmioBlockDevice<B, T
         };
 
         trace!(
-            "Available index: {}, next_avail: {}",
+            "[VirtioBlkDev] process_queue_requests: avail_idx={}, last_avail={}",
             avail_idx,
             queue.get_last_avail_idx()
         );
@@ -420,14 +482,17 @@ impl<B: BlockBackend, T: GuestMemoryAccessor + Clone> VirtioMmioBlockDevice<B, T
             };
 
             trace!(
-                "Processing descriptor chain starting at index {}",
+                "[VirtioBlkDev] Processing descriptor chain starting at index {}",
                 desc_index
             );
 
             // Process the descriptor chain
             match self.process_descriptor_chain(queue, desc_index) {
                 Ok(()) => {
-                    // Request processed successfully, will be handled in process_descriptor_chain
+                    trace!(
+                        "[VirtioBlkDev] Descriptor chain {} processed successfully",
+                        desc_index
+                    );
                 }
                 Err(e) => {
                     error!("Failed to process descriptor chain {}: {:?}", desc_index, e);
@@ -435,8 +500,8 @@ impl<B: BlockBackend, T: GuestMemoryAccessor + Clone> VirtioMmioBlockDevice<B, T
                     if let Err(se) = queue.write_status_byte(desc_index, VIRTIO_BLK_S_IOERR as u8) {
                         error!("Failed to write error status byte: {:?}", se);
                     }
-                    // Store error request for used ring update (len = 0 for error)
-                    processed_requests.push((desc_index, 0u32));
+                    // Store error request for used ring update (len = 1 for status byte only)
+                    processed_requests.push((desc_index, 1u32));
                 }
             }
 
@@ -446,26 +511,34 @@ impl<B: BlockBackend, T: GuestMemoryAccessor + Clone> VirtioMmioBlockDevice<B, T
         // Update next_avail in the queue and handle any error requests
         if current_avail != queue.get_last_avail_idx() || !processed_requests.is_empty() {
             let processed_count = current_avail.wrapping_sub(queue.get_last_avail_idx());
-            trace!("Processed {} requests", processed_count);
+            trace!("[VirtioBlkDev] Processed {} requests", processed_count);
 
             // Update the queue's next_avail index and handle error requests
             let mut queues = self.queues.lock();
             if let Some(queue_mut) = queues.get_mut(queue.index as usize) {
                 queue_mut.update_last_avail_idx(current_avail);
 
-                // Handle any error requests
-                for (desc_index, len) in processed_requests {
-                    if let Err(e) = queue_mut.add_used(desc_index, len) {
-                        error!("Failed to add used buffer for error request: {:?}", e);
+                // Handle any error requests - only check should_notify if we have error requests
+                // Note: successful requests already called should_notify in add_used_buffer
+                if !processed_requests.is_empty() {
+                    for (desc_index, len) in processed_requests {
+                        if let Err(e) = queue_mut.add_used(desc_index, len) {
+                            error!("Failed to add used buffer for error request: {:?}", e);
+                        }
                     }
-                }
 
-                // After processing error requests, check if we should notify the driver
-                let notify = queue_mut.should_notify().unwrap_or(false);
-                if notify {
-                    // Release the lock before triggering interrupt to avoid potential deadlock
-                    drop(queues);
-                    self.trigger_interrupt();
+                    // After processing error requests, check if we should notify the driver
+                    let notify = queue_mut.should_notify().unwrap_or(false);
+                    trace!(
+                        "[VirtioBlkDev] should_notify={} (for error requests)",
+                        notify
+                    );
+                    if notify {
+                        trace!("[VirtioBlkDev] Triggering interrupt (from process_queue_requests)");
+                        // Release the lock before triggering interrupt to avoid potential deadlock
+                        drop(queues);
+                        self.trigger_interrupt();
+                    }
                 }
             }
         }
@@ -486,7 +559,9 @@ impl<B: BlockBackend, T: GuestMemoryAccessor + Clone> VirtioMmioBlockDevice<B, T
         let request_size = request.size() as u32;
 
         // Add the completed request to the used ring
-        self.add_used_buffer(queue, head_index, request_size, status);
+        // Per VirtIO spec, len should be total bytes written to device-writable descriptors
+        // This includes data buffer + status byte (1 byte)
+        self.add_used_buffer(queue, head_index, request_size + 1, status);
 
         Ok(())
     }
@@ -589,8 +664,15 @@ impl<B: BlockBackend, T: GuestMemoryAccessor + Clone> VirtioMmioBlockDevice<B, T
             let header = VirtioBlockHeader::read_from_guest(header_addr, self.accessor.clone())?;
 
             trace!(
-                "Parsed VirtIO block header: type={}, sector={}",
-                header.request_type, header.sector
+                "[VirtioBlkDev] Parsed block request: type={} ({}), sector={}",
+                header.request_type,
+                match header.request_type {
+                    0 => "READ",
+                    1 => "WRITE",
+                    4 => "FLUSH",
+                    _ => "UNKNOWN",
+                },
+                header.sector
             );
 
             Ok(header)
@@ -618,8 +700,16 @@ impl<B: BlockBackend, T: GuestMemoryAccessor + Clone> VirtioMmioBlockDevice<B, T
     /// Add a used buffer to the used ring
     fn add_used_buffer(&self, queue: &VirtioQueue<T>, desc_index: u16, len: u32, status: u8) {
         trace!(
-            "Completing request: desc_index={}, len={}, status={}",
-            desc_index, len, status
+            "[VirtioBlkDev] Completing request: desc_index={}, len={}, status={} ({})",
+            desc_index,
+            len,
+            status,
+            match status {
+                0 => "OK",
+                1 => "IOERR",
+                2 => "UNSUPP",
+                _ => "UNKNOWN",
+            }
         );
 
         // Write the status byte to the status buffer first
@@ -636,6 +726,26 @@ impl<B: BlockBackend, T: GuestMemoryAccessor + Clone> VirtioMmioBlockDevice<B, T
             if let Err(e) = queue_mut.add_used(desc_index, len) {
                 error!("Failed to add used buffer: {:?}", e);
                 return;
+            }
+
+            // Write avail_event to tell guest when to send next notification
+            // Set it to current avail_idx so guest will notify on next request
+            if queue_mut.event_idx_enabled {
+                match queue_mut.read_avail_idx() {
+                    Ok(avail_idx) => {
+                        if let Err(e) = queue_mut.write_avail_event(avail_idx) {
+                            error!("Failed to write avail_event: {:?}", e);
+                        } else {
+                            trace!(
+                                "[VirtioBlkDev] Wrote avail_event={} to tell guest when to notify",
+                                avail_idx
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        error!("Failed to read avail_idx for avail_event: {:?}", e);
+                    }
+                }
             }
 
             // Check if we should notify the driver
@@ -682,8 +792,10 @@ impl<B: BlockBackend, T: GuestMemoryAccessor + Clone> VirtioMmioBlockDevice<B, T
         // Start from the status provided by the driver, then validate and adjust
         let mut new_status = status;
 
-        // If driver sets FEATURES_OK, validate negotiated features
-        if (new_status & VIRTIO_STATUS_FEATURES_OK) != 0 {
+        // If driver sets FEATURES_OK for the first time, validate negotiated features
+        if (new_status & VIRTIO_STATUS_FEATURES_OK) != 0
+            && (*current_status & VIRTIO_STATUS_FEATURES_OK) == 0
+        {
             let driver_feats = *self.driver_features.lock();
             // Driver features must be subset of device features
             if (driver_feats & !self.config.device_features) != 0 {
@@ -694,6 +806,17 @@ impl<B: BlockBackend, T: GuestMemoryAccessor + Clone> VirtioMmioBlockDevice<B, T
                 // Clear FEATURES_OK and set FAILED per spec
                 new_status &= !VIRTIO_STATUS_FEATURES_OK;
                 new_status |= VIRTIO_STATUS_FAILED;
+            } else {
+                // Features are valid, enable EVENT_IDX on queues if negotiated
+                let event_idx_enabled = (driver_feats & VIRTIO_F_RING_EVENT_IDX) != 0;
+                info!(
+                    "[VirtioBlkDev] FEATURES_OK: driver_feats={:#x}, event_idx_enabled={}",
+                    driver_feats, event_idx_enabled
+                );
+                let mut queues = self.queues.lock();
+                for queue in queues.iter_mut() {
+                    queue.set_event_idx_enabled(event_idx_enabled);
+                }
             }
         }
 
